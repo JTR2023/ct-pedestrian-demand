@@ -13,61 +13,118 @@
   <!-- deck.gl for large datasets -->
   <script src="https://unpkg.com/deck.gl@^8.9.0/dist.min.js"></script>
   
-  <!-- Google Cloud Storage client library -->
-  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-storage.js"></script>
+  <!-- Optional: FlatGeobuf support for large datasets -->
+  <script src="https://unpkg.com/@loaders.gl/core@^3.0.0/dist.min.js"></script>
+  <script src="https://unpkg.com/@loaders.gl/flatgeobuf@^3.0.0/dist.min.js"></script>
 </head>
 <body>
   <div class="container">
-    <header>
-      <h1>Connecticut Pedestrian DemandRank</h1>
-    </header>
+    <div id="map"></div>
     
-    <div class="main-content">
-      <div class="sidebar">
-        <div class="control-panel">
-          <h2>Model Parameters</h2>
+    <div class="info-panel">
+      <h2>CT Pedestrian DemandRank</h2>
+      
+      <!-- Main Filter Section (Always Visible) -->
+      <div class="panel-section">
+        <h3>DemandRank Filter</h3>
+        <div class="dual-range-slider">
+          <div class="range-values">
+            <span id="min-score-value">10</span> - <span id="max-score-value">76</span>
+          </div>
+          <div class="slider-container">
+            <input type="range" id="min-score" min="10" max="76" step="1" value="10" class="dual-slider min-slider">
+            <input type="range" id="max-score" min="10" max="76" step="1" value="76" class="dual-slider max-slider">
+            <div class="range-track"></div>
+          </div>
+        </div>
+        <div class="score-colors">
+          <div class="color-box very-low" title="Very Low (10-20)"></div>
+          <div class="color-box low" title="Low (20-30)"></div>
+          <div class="color-box medium-low" title="Medium-Low (30-40)"></div>
+          <div class="color-box medium" title="Medium (40-50)"></div>
+          <div class="color-box medium-high" title="Medium-High (50-60)"></div>
+          <div class="color-box high" title="High (60-70)"></div>
+          <div class="color-box very-high" title="Very High (70+)"></div>
+        </div>
+        
+        <!-- Loading status -->
+        <div class="loading-status">
+          <div>Total Points: <span id="totalPoints">Loading...</span></div>
+          <div id="loadingStatus">Initializing...</div>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+      </div>
+      
+      <!-- Toggle for Advanced Options -->
+      <div class="panel-toggle">
+        <button id="toggle-advanced">Advanced Options ▼</button>
+      </div>
+      
+      <!-- Advanced Options (Hidden by Default) -->
+      <div class="advanced-panel hidden">
+        <!-- Model Weights Section -->
+        <div class="panel-section">
+          <h3>Model Parameters</h3>
           <div class="weight-controls">
             <div class="weight-control">
-              <label for="census-weight">Census Score (0-vehicle households)</label>
+              <label for="census-weight">Census Score <span class="weight-value">20%</span></label>
               <input type="range" id="census-weight" min="0" max="1" step="0.05" value="0.20">
-              <span class="weight-value">20%</span>
             </div>
             <div class="weight-control">
-              <label for="crash-weight">Crash Risk Score</label>
+              <label for="crash-weight">Crash Risk Score <span class="weight-value">20%</span></label>
               <input type="range" id="crash-weight" min="0" max="1" step="0.05" value="0.20">
-              <span class="weight-value">20%</span>
             </div>
             <div class="weight-control">
-              <label for="func-class-weight">Functional Class Score</label>
+              <label for="func-class-weight">Functional Class Score <span class="weight-value">20%</span></label>
               <input type="range" id="func-class-weight" min="0" max="1" step="0.05" value="0.20">
-              <span class="weight-value">20%</span>
             </div>
             <div class="weight-control">
-              <label for="school-weight">School Proximity</label>
+              <label for="school-weight">School Proximity <span class="weight-value">10%</span></label>
               <input type="range" id="school-weight" min="0" max="1" step="0.05" value="0.10">
-              <span class="weight-value">10%</span>
             </div>
             <div class="weight-control">
-              <label for="trail-weight">Trail Proximity</label>
+              <label for="trail-weight">Trail Proximity <span class="weight-value">10%</span></label>
               <input type="range" id="trail-weight" min="0" max="1" step="0.05" value="0.10">
-              <span class="weight-value">10%</span>
             </div>
             <div class="weight-control">
-              <label for="rail-weight">Rail Stop Proximity</label>
+              <label for="rail-weight">Rail Stop Proximity <span class="weight-value">10%</span></label>
               <input type="range" id="rail-weight" min="0" max="1" step="0.05" value="0.10">
-              <span class="weight-value">10%</span>
             </div>
             <div class="weight-control">
-              <label for="bus-weight">Bus Stop Proximity</label>
+              <label for="bus-weight">Bus Stop Proximity <span class="weight-value">10%</span></label>
               <input type="range" id="bus-weight" min="0" max="1" step="0.05" value="0.10">
-              <span class="weight-value">10%</span>
             </div>
             <div class="total-weight">Total: <span id="total-weight">100%</span></div>
             <button id="recalculate">Recalculate DemandRank</button>
           </div>
-          
-          <h2>Filters</h2>
+        </div>
+        
+        <!-- Preset Filters Section -->
+        <div class="panel-section">
+          <h3>Presets</h3>
+          <div class="preset-filters">
+            <div class="preset">
+              <input type="radio" name="preset" id="preset-none" value="none" checked>
+              <label for="preset-none">No preset (custom)</label>
+            </div>
+            <div class="preset">
+              <input type="radio" name="preset" id="preset-high-need" value="high_need">
+              <label for="preset-high-need">High need / no sidewalk</label>
+            </div>
+            <div class="preset">
+              <input type="radio" name="preset" id="preset-high-crash" value="high_crash">
+              <label for="preset-high-crash">Crash hot spots</label>
+            </div>
+            <div class="preset">
+              <input type="radio" name="preset" id="preset-slam-dunk" value="slam_dunk">
+              <label for="preset-slam-dunk">High need + crash + no sidewalk</label>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Layer Controls Section -->
+        <div class="panel-section">
+          <h3>Filters</h3>
           <div class="filters">
             <div class="filter">
               <input type="checkbox" id="pedestrian-feasible" checked>
@@ -78,44 +135,52 @@
               <label for="urban-context">Urban Areas Only</label>
             </div>
             <div class="filter">
-              <input type="checkbox" id="existing-sidewalks">
-              <label for="existing-sidewalks">Show Existing Sidewalks</label>
+              <input type="checkbox" id="highlight-sidewalk-gaps">
+              <label for="highlight-sidewalk-gaps">Highlight Sidewalk Gaps</label>
+            </div>
+            <div class="filter">
+              <input type="checkbox" id="highlight-crash-segments">
+              <label for="highlight-crash-segments">Highlight Crash Segments</label>
             </div>
             <div class="filter">
               <input type="checkbox" id="show-street-view">
               <label for="show-street-view">Enable Street View</label>
             </div>
           </div>
-          
-          <h2>Score Range Filter</h2>
-          <div class="score-filter">
-            <div class="range-slider">
-              <span>Minimum Score: <span id="min-score-value">10</span></span>
-              <input type="range" id="min-score" min="10" max="76" step="1" value="10">
-            </div>
-            <div class="range-slider">
-              <span>Maximum Score: <span id="max-score-value">76</span></span>
-              <input type="range" id="max-score" min="10" max="76" step="1" value="76">
-            </div>
+        </div>
+        
+        <!-- Search Section -->
+        <div class="panel-section">
+          <h3>Search by Route ID</h3>
+          <div class="search-input">
+            <input type="text" id="route-search" placeholder="Enter Route ID (e.g., 17-N)">
+            <button id="search-button">Go</button>
           </div>
-          
-          <h2>Export</h2>
-          <div class="export-controls">
-            <button id="export-csv">Export CSV</button>
-            <button id="export-geojson">Export GeoJSON</button>
+        </div>
+        
+        <!-- Display Options Section -->
+        <div class="panel-section">
+          <h3>Display Options</h3>
+          <div class="display-options">
+            <div class="basemap-selector">
+              <label for="basemap-style">Basemap:</label>
+              <select id="basemap-style">
+                <option value="roadmap">Road Map</option>
+                <option value="satellite">Satellite</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="terrain">Terrain</option>
+              </select>
+            </div>
+            <div class="export-controls">
+              <button id="copy-link">Copy Link to View</button>
+              <button id="export-csv">Export CSV</button>
+            </div>
           </div>
         </div>
       </div>
-      
-      <div class="map-container">
-        <div id="map"></div>
-        <div id="street-view" class="hidden"></div>
-      </div>
     </div>
     
-    <footer>
-      <p>Based on Connecticut DOT Pedestrian DemandRank methodology</p>
-    </footer>
+    <div id="street-view" class="hidden"></div>
   </div>
 
   <script src="config.js"></script>

@@ -17,6 +17,8 @@ npm-debug.log*
 # Large data files (store these in Google Cloud Storage instead)
 data/*.gpkg
 data/geojson/
+milepoints_data.json
+cors-config.json
 
 # API keys (these should be added securely in production)
 # config.js is committed with a placeholder API key

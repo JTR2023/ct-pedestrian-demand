@@ -2,7 +2,7 @@
 const CONFIG = {
   // Google Cloud Storage configuration
   storage: {
-    bucketName: 'YOUR_GCS_BUCKET_NAME',
+    bucketName: 'ct-pedestrian-demand-data',
     dataPath: 'data/',
     tilesetPath: 'tilesets/',
   },

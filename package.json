@@ -5,12 +5,14 @@
   "main": "index.js",
   "scripts": {
     "start": "http-server -p 8080",
-    "deploy": "gsutil -m cp -r * gs://your-gcs-bucket-name/",
+    "deploy": "gsutil -m cp -r * gs://ct-pedestrian-demand-data/",
+    "deploy-data": "gsutil -m cp -r data/geojson/*.geojson gs://ct-pedestrian-demand-data/data/",
     "convert": "ogr2ogr -f GeoJSON data/demandrank.geojson data/source.gpkg",
     "preview": "http-server -p 8080"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.16.0",
+    "better-sqlite3": "^11.9.1",
     "deck.gl": "^8.9.0",
     "http-server": "^14.1.1"
   }

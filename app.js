@@ -2,634 +2,770 @@
 let map;
 let panorama;
 let deckOverlay;
-let dataChunks = [];
-let activeChunks = [];
-let currentWeights = { ...CONFIG.demandRank.defaultWeights };
+let pointsData = [];
 let filteredData = [];
 let isDataLoaded = false;
 
-// DOM elements
-const weightControls = {
-  census: document.getElementById('census-weight'),
-  crash: document.getElementById('crash-weight'),
-  funcClass: document.getElementById('func-class-weight'),
-  school: document.getElementById('school-weight'),
-  trail: document.getElementById('trail-weight'),
-  rail: document.getElementById('rail-weight'),
-  bus: document.getElementById('bus-weight')
+// Default model weights
+const defaultWeights = {
+  census: 0.20,
+  crash: 0.20,
+  funcClass: 0.20,
+  school: 0.10,
+  trail: 0.10,
+  rail: 0.10,
+  bus: 0.10
 };
 
-const filters = {
-  pedestrianFeasible: document.getElementById('pedestrian-feasible'),
-  urbanContext: document.getElementById('urban-context'),
-  existingSidewalks: document.getElementById('existing-sidewalks'),
-  showStreetView: document.getElementById('show-street-view')
+// Current weights (start with defaults)
+let currentWeights = { ...defaultWeights };
+
+// Preset filters
+const presetFilters = {
+  high_need: "DemandRank >= 50 AND Sidewalks = 0 AND pedestrian_feasible = 1",
+  high_crash: "crash_risk_score = 10 AND pedestrian_feasible = 1",
+  slam_dunk: "DemandRank >= 50 AND crash_risk_score = 10 AND Sidewalks = 0 AND pedestrian_feasible = 1"
 };
 
-const scoreFilters = {
-  minScore: document.getElementById('min-score'),
-  maxScore: document.getElementById('max-score')
-};
-
-// Initialize the map and deck.gl overlay
+// Initialize the map when Google Maps API loads
 function initMap() {
-  // Create Google Map
+  // Set up Google Map
   map = new google.maps.Map(document.getElementById('map'), {
-    center: CONFIG.maps.center,
-    zoom: CONFIG.maps.zoom,
-    maxZoom: CONFIG.maps.maxZoom,
-    mapTypeId: google.maps.MapTypeId.ROADMAP,
+    center: { lat: 41.6032, lng: -72.7266 },
+    zoom: 9,
+    mapTypeId: 'roadmap',
     mapTypeControl: true,
-    streetViewControl: false // We'll add our own Street View control
+    mapTypeControlOptions: {
+      position: google.maps.ControlPosition.TOP_RIGHT
+    },
+    streetViewControl: true,
+    streetViewControlOptions: {
+      position: google.maps.ControlPosition.RIGHT_TOP
+    }
   });
   
-  // Create Street View panorama
+  // Set up Street View
   panorama = new google.maps.StreetViewPanorama(
     document.getElementById('street-view'),
     {
-      position: CONFIG.maps.center,
+      position: { lat: 41.6032, lng: -72.7266 },
       pov: { heading: 0, pitch: 0 },
       visible: false
     }
   );
+  map.setStreetView(panorama);
   
-  // Toggle Street View when clicking on the map
-  map.addListener('click', function(event) {
-    if (filters.showStreetView.checked) {
-      const streetViewService = new google.maps.StreetViewService();
-      
-      streetViewService.getPanorama({
-        location: event.latLng,
-        radius: 50 // meters
-      }, function(data, status) {
-        if (status === google.maps.StreetViewStatus.OK) {
-          document.getElementById('street-view').classList.remove('hidden');
-          panorama.setPosition(event.latLng);
-          panorama.setVisible(true);
-        } else {
-          alert('No Street View available at this location');
-        }
-      });
+  // Hide UI in Street View
+  map.addListener('streetview_changed', () => {
+    const infoPanel = document.querySelector('.info-panel');
+    if (map.getStreetView().getVisible()) {
+      infoPanel.classList.add('hidden-in-streetview');
+    } else {
+      infoPanel.classList.remove('hidden-in-streetview');
+    }
+  });
+  
+  // Update map layers when view changes (for large datasets)
+  map.addListener('idle', () => {
+    if (isDataLoaded) {
+      updateMapLayers();
     }
   });
   
   // Initialize deck.gl overlay
   initDeckGL();
   
-  // Add legend
-  createLegend();
-  
-  // Load data
-  loadDataChunks();
-  
   // Set up event listeners
   setupEventListeners();
+  
+  // Load initial state from URL hash if present
+  loadStateFromUrl();
+  
+  // Load data (either chunks or FlatGeobuf)
+  loadData();
 }
 
-// Initialize deck.gl overlay on the map
+// Initialize deck.gl overlay
 function initDeckGL() {
-  // Create deck.gl overlay for Google Maps
   deckOverlay = new deck.GoogleMapsOverlay({
     layers: []
   });
-  
-  // Add overlay to map
   deckOverlay.setMap(map);
 }
 
-// Create map legend
-function createLegend() {
-  const legend = document.createElement('div');
-  legend.className = 'legend';
-  legend.style.position = 'absolute';
-  legend.style.bottom = '30px';
-  legend.style.right = '10px';
+// Set up event listeners
+function setupEventListeners() {
+  // Advanced panel toggle
+  const toggleBtn = document.getElementById('toggle-advanced');
+  const advancedPanel = document.querySelector('.advanced-panel');
   
-  let legendContent = '<div class="legend-title">DemandRank Score</div>';
-  
-  // Add color blocks for each range
-  CONFIG.demandRank.colors.forEach(colorRange => {
-    legendContent += `
-      <div>
-        <i style="background-color: ${colorRange.color}"></i>
-        ${colorRange.min}-${colorRange.max} (${colorRange.label})
-      </div>
-    `;
+  toggleBtn.addEventListener('click', () => {
+    advancedPanel.classList.toggle('hidden');
+    toggleBtn.textContent = advancedPanel.classList.contains('hidden') 
+      ? 'Advanced Options ▼' 
+      : 'Advanced Options ▲';
   });
   
-  // Add sidewalk entry if enabled
-  legendContent += `
-    <div id="sidewalk-legend" class="hidden">
-      <div class="legend-title" style="margin-top: 10px;">Infrastructure</div>
-      <div>
-        <i style="background-color: ${CONFIG.demandRank.sidewalkColor}"></i>
-        Existing Sidewalks
-      </div>
-    </div>
-  `;
+  // DemandRank filter sliders
+  const minScoreSlider = document.getElementById('min-score');
+  const maxScoreSlider = document.getElementById('max-score');
+  const minScoreValue = document.getElementById('min-score-value');
+  const maxScoreValue = document.getElementById('max-score-value');
   
-  legend.innerHTML = legendContent;
-  document.getElementById('map').appendChild(legend);
-}
-
-// Update sidewalk legend visibility
-function updateSidewalkLegend() {
-  const sidewalkLegend = document.getElementById('sidewalk-legend');
-  if (filters.existingSidewalks.checked) {
-    sidewalkLegend.classList.remove('hidden');
-  } else {
-    sidewalkLegend.classList.add('hidden');
-  }
-}
-
-// Set up all event listeners
-function setupEventListeners() {
-  // Weight sliders
-  Object.entries(weightControls).forEach(([key, control]) => {
-    const valueDisplay = control.nextElementSibling;
+  minScoreSlider.addEventListener('input', () => {
+    const minValue = parseInt(minScoreSlider.value);
+    const maxValue = parseInt(maxScoreSlider.value);
     
-    control.addEventListener('input', () => {
-      const value = parseFloat(control.value);
+    minScoreValue.textContent = minValue;
+    
+    if (minValue > maxValue) {
+      maxScoreSlider.value = minValue;
+      maxScoreValue.textContent = minValue;
+    }
+    
+    if (isDataLoaded) {
+      filterAndUpdateMap();
+    }
+  });
+  
+  maxScoreSlider.addEventListener('input', () => {
+    const minValue = parseInt(minScoreSlider.value);
+    const maxValue = parseInt(maxScoreSlider.value);
+    
+    maxScoreValue.textContent = maxValue;
+    
+    if (maxValue < minValue) {
+      minScoreSlider.value = maxValue;
+      minScoreValue.textContent = maxValue;
+    }
+    
+    if (isDataLoaded) {
+      filterAndUpdateMap();
+    }
+  });
+  
+  // Weight sliders
+  const weightInputs = {
+    census: document.getElementById('census-weight'),
+    crash: document.getElementById('crash-weight'),
+    funcClass: document.getElementById('func-class-weight'),
+    school: document.getElementById('school-weight'),
+    trail: document.getElementById('trail-weight'),
+    rail: document.getElementById('rail-weight'),
+    bus: document.getElementById('bus-weight')
+  };
+  
+  // Update weights when sliders change
+  Object.entries(weightInputs).forEach(([key, input]) => {
+    if (!input) return;
+    
+    const valueDisplay = input.parentElement.querySelector('.weight-value');
+    
+    input.addEventListener('input', () => {
+      const value = parseFloat(input.value);
       valueDisplay.textContent = `${Math.round(value * 100)}%`;
       currentWeights[key] = value;
       updateTotalWeight();
     });
   });
   
-  // Score range filters
-  scoreFilters.minScore.addEventListener('input', () => {
-    const value = parseInt(scoreFilters.minScore.value);
-    document.getElementById('min-score-value').textContent = value;
-    
-    // Ensure min doesn't exceed max
-    if (value > parseInt(scoreFilters.maxScore.value)) {
-      scoreFilters.maxScore.value = value;
-      document.getElementById('max-score-value').textContent = value;
-    }
-  });
-  
-  scoreFilters.maxScore.addEventListener('input', () => {
-    const value = parseInt(scoreFilters.maxScore.value);
-    document.getElementById('max-score-value').textContent = value;
-    
-    // Ensure max doesn't go below min
-    if (value < parseInt(scoreFilters.minScore.value)) {
-      scoreFilters.minScore.value = value;
-      document.getElementById('min-score-value').textContent = value;
-    }
-  });
+  // Recalculate button
+  const recalculateBtn = document.getElementById('recalculate');
+  if (recalculateBtn) {
+    recalculateBtn.addEventListener('click', () => {
+      if (isDataLoaded) {
+        recalculateDemandRank();
+        filterAndUpdateMap();
+      }
+    });
+  }
   
   // Filter checkboxes
-  Object.values(filters).forEach(filter => {
-    filter.addEventListener('change', () => {
-      if (filter === filters.existingSidewalks) {
-        updateSidewalkLegend();
-      }
-      
-      if (filter === filters.showStreetView) {
-        if (!filter.checked) {
-          document.getElementById('street-view').classList.add('hidden');
-          panorama.setVisible(false);
+  const filterCheckboxes = [
+    'pedestrian-feasible',
+    'urban-context',
+    'highlight-sidewalk-gaps',
+    'highlight-crash-segments',
+    'show-street-view'
+  ];
+  
+  filterCheckboxes.forEach(id => {
+    const checkbox = document.getElementById(id);
+    if (checkbox) {
+      checkbox.addEventListener('change', () => {
+        if (isDataLoaded) {
+          filterAndUpdateMap();
         }
-      }
-      
-      if (isDataLoaded) {
-        applyFiltersAndUpdate();
-      }
-    });
-  });
-  
-  // Recalculate button
-  document.getElementById('recalculate').addEventListener('click', () => {
-    if (isDataLoaded) {
-      recalculateDemandRank();
-      applyFiltersAndUpdate();
-    }
-  });
-  
-  // Export buttons
-  document.getElementById('export-csv').addEventListener('click', exportCSV);
-  document.getElementById('export-geojson').addEventListener('click', exportGeoJSON);
-  
-  // Map zoom changed - load appropriate data chunks
-  map.addListener('zoom_changed', debounce(() => {
-    if (isDataLoaded) {
-      loadAppropriateChunks();
-    }
-  }, 300));
-  
-  // Map bounds changed - load appropriate data chunks
-  map.addListener('bounds_changed', debounce(() => {
-    if (isDataLoaded) {
-      loadAppropriateChunks();
-    }
-  }, 300));
-}
-
-// Update total weight display
-function updateTotalWeight() {
-  const total = Object.values(currentWeights)
-    .reduce((sum, weight) => sum + weight, 0);
-  
-  const totalDisplay = document.getElementById('total-weight');
-  totalDisplay.textContent = `${Math.round(total * 100)}%`;
-  
-  // Highlight if not equal to 100%
-  if (Math.abs(total - 1) > 0.01) {
-    totalDisplay.style.color = 'red';
-  } else {
-    totalDisplay.style.color = 'inherit';
-  }
-}
-
-// Load data chunks based on Google Cloud Storage
-async function loadDataChunks() {
-  try {
-    // For development, we can use a simple approach with a fixed number of chunks
-    // In production, you would use Firebase or direct GCS access to list available chunks
-    const totalChunks = 10; // Adjust based on your data size
-    
-    let loadedChunks = 0;
-    const loadingPromises = [];
-    
-    // Start loading all chunks
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkPromise = fetch(CONFIG.data.geoJsonChunkPattern.replace('{chunk}', i))
-        .then(response => {
-          if (!response.ok) {
-            if (response.status === 404) {
-              // This is OK - we might have reached the end of chunks
-              return null;
-            }
-            throw new Error(`Failed to load data chunk ${i}: ${response.status}`);
+        
+        if (id === 'show-street-view') {
+          if (!checkbox.checked) {
+            document.getElementById('street-view').classList.add('hidden');
+            panorama.setVisible(false);
           }
-          return response.json();
-        })
-        .then(data => {
-          if (data) {
-            dataChunks.push({
-              index: i,
-              data: data.features || data,
-              bounds: calculateBounds(data.features || data)
-            });
-            loadedChunks++;
-          }
-          // Update loading progress
-          updateLoadingProgress(loadedChunks, totalChunks);
-        })
-        .catch(error => {
-          console.error(`Error loading chunk ${i}:`, error);
-          // Continue with other chunks
-          return null;
-        });
-      
-      loadingPromises.push(chunkPromise);
-    }
-    
-    // Wait for all chunks to be processed
-    await Promise.all(loadingPromises);
-    
-    // Initialize the app with the loaded data
-    isDataLoaded = true;
-    recalculateDemandRank();
-    loadAppropriateChunks();
-    
-  } catch (error) {
-    console.error('Error loading data chunks:', error);
-    alert('Failed to load data. See console for details.');
-  }
-}
-
-// Update loading progress indicator
-function updateLoadingProgress(loaded, total) {
-  // You could implement a loading bar here
-  console.log(`Loading data: ${loaded}/${total} chunks`);
-}
-
-// Calculate geographic bounds for a set of features
-function calculateBounds(features) {
-  if (!features || features.length === 0) return null;
-  
-  let minLat = Infinity;
-  let maxLat = -Infinity;
-  let minLng = Infinity;
-  let maxLng = -Infinity;
-  
-  features.forEach(feature => {
-    // This assumes point geometries - adjust for lines/polygons as needed
-    const coords = feature.geometry.coordinates;
-    
-    if (feature.geometry.type === 'Point') {
-      minLng = Math.min(minLng, coords[0]);
-      maxLng = Math.max(maxLng, coords[0]);
-      minLat = Math.min(minLat, coords[1]);
-      maxLat = Math.max(maxLat, coords[1]);
-    } 
-    else if (feature.geometry.type === 'LineString') {
-      coords.forEach(point => {
-        minLng = Math.min(minLng, point[0]);
-        maxLng = Math.max(maxLng, point[0]);
-        minLat = Math.min(minLat, point[1]);
-        maxLat = Math.max(maxLat, point[1]);
+        }
       });
     }
-    // Add handling for other geometry types as needed
   });
   
-  return {
-    north: maxLat,
-    south: minLat,
-    east: maxLng,
-    west: minLng
-  };
-}
-
-// Load chunks that are relevant to the current map view
-function loadAppropriateChunks() {
-  const currentZoom = map.getZoom();
-  const currentBounds = map.getBounds();
-  
-  if (!currentBounds) return;
-  
-  // Find zoom threshold
-  const zoomThreshold = CONFIG.dataChunking.zoomLevelThresholds.find(
-    threshold => currentZoom <= threshold.zoom
-  ) || CONFIG.dataChunking.zoomLevelThresholds[CONFIG.dataChunking.zoomLevelThresholds.length - 1];
-  
-  // Reset active chunks
-  activeChunks = [];
-  
-  // Calculate which chunks intersect the current view
-  const intersectingChunks = dataChunks.filter(chunk => {
-    if (!chunk.bounds) return false;
-    
-    // Check if chunk bounds intersect with map bounds
-    return !(
-      chunk.bounds.west > currentBounds.getNorthEast().lng() ||
-      chunk.bounds.east < currentBounds.getSouthWest().lng() ||
-      chunk.bounds.north < currentBounds.getSouthWest().lat() ||
-      chunk.bounds.south > currentBounds.getNorthEast().lat()
-    );
-  });
-  
-  // Sort by distance to center of view for priority
-  const center = map.getCenter();
-  intersectingChunks.sort((a, b) => {
-    const aCenterLat = (a.bounds.north + a.bounds.south) / 2;
-    const aCenterLng = (a.bounds.east + a.bounds.west) / 2;
-    const bCenterLat = (b.bounds.north + b.bounds.south) / 2;
-    const bCenterLng = (b.bounds.east + b.bounds.west) / 2;
-    
-    const aDistance = Math.sqrt(
-      Math.pow(aCenterLat - center.lat(), 2) + 
-      Math.pow(aCenterLng - center.lng(), 2)
-    );
-    
-    const bDistance = Math.sqrt(
-      Math.pow(bCenterLat - center.lat(), 2) + 
-      Math.pow(bCenterLng - center.lng(), 2)
-    );
-    
-    return aDistance - bDistance;
-  });
-  
-  // Limit number of active chunks based on zoom level
-  const maxFeatures = zoomThreshold.maxFeatures;
-  let featureCount = 0;
-  
-  for (const chunk of intersectingChunks) {
-    if (featureCount >= maxFeatures) break;
-    
-    activeChunks.push(chunk);
-    featureCount += chunk.data.length;
-  }
-  
-  // Apply filters and update visualization
-  applyFiltersAndUpdate();
-}
-
-// Recalculate DemandRank for all features using current weights
-function recalculateDemandRank() {
-  dataChunks.forEach(chunk => {
-    chunk.data.forEach(feature => {
-      const props = feature.properties;
-      
-      // Calculate new demand rank based on current weights
-      const newDemandRank = 
-        currentWeights.census * props[CONFIG.data.fields.censusScore] +
-        currentWeights.crash * props[CONFIG.data.fields.crashRiskScore] +
-        currentWeights.funcClass * props[CONFIG.data.fields.functionalClassScore] +
-        currentWeights.school * props[CONFIG.data.fields.schoolProximityScore] +
-        currentWeights.trail * props[CONFIG.data.fields.trailProximityScore] +
-        currentWeights.rail * props[CONFIG.data.fields.railProximityScore] +
-        currentWeights.bus * props[CONFIG.data.fields.busProximityScore];
-      
-      // Store original and recalculated scores
-      if (!props.hasOwnProperty('original_demand_rank')) {
-        props.original_demand_rank = props[CONFIG.data.fields.demandRank];
+  // Preset radio buttons
+  const presetRadios = document.querySelectorAll('input[name="preset"]');
+  presetRadios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      if (isDataLoaded) {
+        filterAndUpdateMap();
       }
-      
-      props[CONFIG.data.fields.demandRank] = newDemandRank;
     });
   });
+  
+  // Route search
+  const searchBtn = document.getElementById('search-button');
+  const routeInput = document.getElementById('route-search');
+  
+  if (searchBtn && routeInput) {
+    searchBtn.addEventListener('click', () => {
+      searchByRouteId(routeInput.value);
+    });
+    
+    routeInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        searchByRouteId(routeInput.value);
+      }
+    });
+  }
+  
+  // Basemap style
+  const basemapSelect = document.getElementById('basemap-style');
+  if (basemapSelect) {
+    basemapSelect.addEventListener('change', () => {
+      map.setMapTypeId(basemapSelect.value);
+    });
+  }
+  
+  // Export buttons
+  const exportCsvBtn = document.getElementById('export-csv');
+  const copyLinkBtn = document.getElementById('copy-link');
+  
+  if (exportCsvBtn) {
+    exportCsvBtn.addEventListener('click', exportCSV);
+  }
+  
+  if (copyLinkBtn) {
+    copyLinkBtn.addEventListener('click', shareCurrentView);
+  }
 }
 
-// Apply filters to active chunks and update visualization
-function applyFiltersAndUpdate() {
-  const minScore = parseInt(scoreFilters.minScore.value);
-  const maxScore = parseInt(scoreFilters.maxScore.value);
+// Load data from Google Cloud Storage
+async function loadData() {
+  updateLoadingStatus('Initializing...', 0);
   
-  // Reset filtered data
-  filteredData = [];
+  try {
+    // Load the single GeoJSON file from Google Cloud Storage
+    const url = 'https://storage.googleapis.com/ct-pedestrian-demand-data/data/milepoints_data.json';
+    updateLoadingStatus('Fetching data from Google Cloud Storage...', 10);
+    
+    const data = await loadGeoJSON(url);
+    
+    // Store parsed data
+    pointsData = data.features || data;
+    
+    // Normalize data if needed
+    normalizeData();
+    
+    // Update UI
+    document.getElementById('totalPoints').textContent = pointsData.length.toLocaleString();
+    updateLoadingStatus('Data loaded successfully', 100);
+    
+    // Setup complete - filter and show data
+    isDataLoaded = true;
+    filterAndUpdateMap();
+    
+  } catch (error) {
+    console.error('Error loading data:', error);
+    updateLoadingStatus(`Error: ${error.message}`, 100, true);
+  }
+}
+
+// Load data using FlatGeobuf format
+async function loadFlatGeobuf(url) {
+  updateLoadingStatus('Loading FlatGeobuf data...', 10);
   
-  // Apply filters to active chunks
-  activeChunks.forEach(chunk => {
-    const filtered = chunk.data.filter(feature => {
-      const props = feature.properties;
-      const score = props[CONFIG.data.fields.demandRank];
+  try {
+    const data = await loaders.load(url, loaders.FlatGeobufLoader);
+    updateLoadingStatus('Processing data...', 80);
+    return data;
+  } catch (error) {
+    throw new Error(`Failed to load FlatGeobuf: ${error.message}`);
+  }
+}
+
+// Load data using GeoJSON format
+async function loadGeoJSON(url) {
+  updateLoadingStatus('Fetching GeoJSON data...', 10);
+  
+  try {
+    // Fetch the data with appropriate cache settings
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      },
+      cache: 'no-cache' // Ensure we get fresh data
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! Status: ${response.status}`);
+    }
+    
+    // Get content length if available
+    const contentLength = +response.headers.get('Content-Length');
+    const totalSizeMB = contentLength ? (contentLength / (1024 * 1024)).toFixed(1) : 'unknown';
+    updateLoadingStatus(`Loading data (${totalSizeMB} MB total)...`, 15);
+    
+    // Stream and process the response
+    const reader = response.body.getReader();
+    let receivedLength = 0;
+    let chunks = [];
+    let lastProgressUpdate = Date.now();
+    
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
       
-      // Apply score range filter
-      if (score < minScore || score > maxScore) {
+      chunks.push(value);
+      receivedLength += value.length;
+      
+      // Update progress (but limit updates to once every 500ms to avoid UI thrashing)
+      const now = Date.now();
+      if (now - lastProgressUpdate > 500) {
+        lastProgressUpdate = now;
+        
+        if (contentLength) {
+          const percentComplete = Math.round((receivedLength / contentLength) * 100);
+          const progress = Math.round((receivedLength / contentLength) * 65);
+          updateLoadingStatus(`Loading data: ${(receivedLength / (1024 * 1024)).toFixed(1)} MB of ${totalSizeMB} MB (${percentComplete}%)`, 15 + progress);
+        } else {
+          updateLoadingStatus(`Loading data: ${(receivedLength / (1024 * 1024)).toFixed(1)} MB received`, 40);
+        }
+      }
+    }
+    
+    updateLoadingStatus('Processing GeoJSON data...', 80);
+    
+    // Combine chunks and parse JSON
+    const chunksAll = new Uint8Array(receivedLength);
+    let position = 0;
+    for (let chunk of chunks) {
+      chunksAll.set(chunk, position);
+      position += chunk.length;
+    }
+    
+    const text = new TextDecoder("utf-8").decode(chunksAll);
+    const parsedData = JSON.parse(text);
+    
+    updateLoadingStatus('GeoJSON loaded successfully, preparing data...', 90);
+    
+    return parsedData;
+    
+  } catch (error) {
+    console.error('GeoJSON loading error:', error);
+    throw new Error(`Failed to load GeoJSON: ${error.message}`);
+  }
+}
+
+// Normalize data format if needed
+function normalizeData() {
+  // This function adapts different data formats to a common structure
+  // In case the data format changes or needs adjustment
+  pointsData = pointsData.map(point => {
+    // Handle GeoJSON feature structure
+    const properties = point.properties || point;
+    const geometry = point.geometry || {};
+    const coordinates = geometry.coordinates || [];
+    
+    // Extract position from geometry if available
+    let position = properties.position;
+    if (!position && coordinates.length >= 2) {
+      // GeoJSON uses [longitude, latitude] order
+      position = coordinates;
+    } else if (!position && properties.longitude != null && properties.latitude != null) {
+      position = [properties.longitude, properties.latitude];
+    }
+    
+    // Ensure consistent property naming and structure
+    return {
+      ...properties,
+      // Add any normalized properties here if needed
+      DemandRank: properties.DemandRank || properties.demand_rank || 0,
+      position: position
+    };
+  });
+  
+  // Filter out any entries without valid positions
+  pointsData = pointsData.filter(point => 
+    point.position && Array.isArray(point.position) && point.position.length >= 2
+  );
+}
+
+// Update the loading status display
+function updateLoadingStatus(message, progress, isError = false) {
+  const statusElement = document.getElementById('loadingStatus');
+  const progressFill = document.getElementById('progressFill');
+  
+  if (statusElement) {
+    statusElement.textContent = message;
+  }
+  
+  if (progressFill) {
+    progressFill.style.width = `${progress}%`;
+    if (isError) {
+      progressFill.style.backgroundColor = '#f44336';
+    }
+  }
+}
+
+// Calculate total weight and update display
+function updateTotalWeight() {
+  const total = Object.values(currentWeights).reduce((sum, weight) => sum + weight, 0);
+  const totalDisplay = document.getElementById('total-weight');
+  
+  if (totalDisplay) {
+    totalDisplay.textContent = `${Math.round(total * 100)}%`;
+    
+    if (Math.abs(total - 1) > 0.01) {
+      totalDisplay.style.color = 'red';
+    } else {
+      totalDisplay.style.color = 'inherit';
+    }
+  }
+}
+
+// Recalculate DemandRank based on current weights
+function recalculateDemandRank() {
+  pointsData.forEach(point => {
+    // Store original demand rank if not already stored
+    if (!point.hasOwnProperty('original_DemandRank')) {
+      point.original_DemandRank = point.DemandRank;
+    }
+    
+    // Calculate new demand rank using weights
+    const newDemandRank =
+      currentWeights.census * (point.census_score || 0) +
+      currentWeights.crash * (point.crash_risk_score || 0) +
+      currentWeights.funcClass * (point.functional_class_score || 0) +
+      currentWeights.school * (point.school_proximity_score || 0) +
+      currentWeights.trail * (point.trail_proximity_score || 0) +
+      currentWeights.rail * (point.rail_proximity_score || 0) +
+      currentWeights.bus * (point.bus_proximity_score || 0);
+    
+    // Update demand rank
+    point.DemandRank = newDemandRank;
+  });
+}
+
+// Filter data based on UI controls and update map
+function filterAndUpdateMap() {
+  // Get current filter values
+  const minRank = parseInt(document.getElementById('min-score').value);
+  const maxRank = parseInt(document.getElementById('max-score').value);
+  
+  // Optional filters
+  const pedestrianFeasible = document.getElementById('pedestrian-feasible')?.checked;
+  const urbanContext = document.getElementById('urban-context')?.checked;
+  const highlightSidewalkGaps = document.getElementById('highlight-sidewalk-gaps')?.checked;
+  const highlightCrashSegments = document.getElementById('highlight-crash-segments')?.checked;
+  
+  // Check for active preset
+  const activePreset = document.querySelector('input[name="preset"]:checked')?.value;
+  
+  // Apply filters to data
+  filteredData = pointsData.filter(point => {
+    // Basic validation
+    if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) {
+      return false;
+    }
+    
+    // Demand rank filter
+    const rank = point.DemandRank;
+    if (typeof rank !== 'number' || isNaN(rank) || rank < minRank || rank > maxRank) {
+      return false;
+    }
+    
+    // Optional filters
+    if (pedestrianFeasible && !point.pedestrian_feasible) {
+      return false;
+    }
+    
+    if (urbanContext && !point.urban_context) {
+      return false;
+    }
+    
+    // Preset filters
+    if (activePreset && activePreset !== 'none') {
+      const presetCondition = presetFilters[activePreset];
+      if (presetCondition) {
+        // Parse and apply the SQL-like condition
+        if (presetCondition.includes('DemandRank >= 50') && point.DemandRank < 50) return false;
+        if (presetCondition.includes('crash_risk_score = 10') && point.crash_risk_score !== 10) return false;
+        if (presetCondition.includes('Sidewalks = 0') && point.Sidewalks !== 0) return false;
+        if (presetCondition.includes('pedestrian_feasible = 1') && point.pedestrian_feasible !== 1) return false;
+      }
+    }
+    
+    return true;
+  });
+  
+  // Update the map with filtered data
+  updateMapLayers();
+}
+
+// Update deck.gl layers
+function updateMapLayers() {
+  if (!deckOverlay || !filteredData || filteredData.length === 0) {
+    console.log('No filtered data available to display');
+    return;
+  }
+  
+  // Log summary for debugging
+  console.log(`Displaying ${filteredData.length} points on the map`);
+  
+  // Create datasets for different visualizations
+  let roadData = filteredData;
+  let sidewalkGaps = [];
+  let crashSegments = [];
+  
+  // Get current view bounds to optimize rendering
+  const bounds = map.getBounds();
+  const inView = point => {
+    if (!point.position || !Array.isArray(point.position) || point.position.length < 2) return false;
+    const lat = point.position[1];
+    const lng = point.position[0];
+    return lat >= bounds.getSouthWest().lat() && 
+           lat <= bounds.getNorthEast().lat() && 
+           lng >= bounds.getSouthWest().lng() && 
+           lng <= bounds.getNorthEast().lng();
+  };
+  
+  // Limit points if too many to render efficiently
+  const maxPointsToRender = 100000;
+  let visiblePoints = roadData;
+  
+  if (roadData.length > maxPointsToRender) {
+    // If too many points, prioritize visible ones and sample others
+    const visibleData = roadData.filter(inView);
+    if (visibleData.length < maxPointsToRender) {
+      // We can show all visible points and sample the rest
+      const remainingPoints = roadData.filter(p => !inView(p));
+      const samplingRate = (maxPointsToRender - visibleData.length) / remainingPoints.length;
+      const sampledPoints = remainingPoints.filter(() => Math.random() < samplingRate);
+      visiblePoints = [...visibleData, ...sampledPoints];
+    } else {
+      // Sample from visible points only
+      const samplingRate = maxPointsToRender / visibleData.length;
+      visiblePoints = visibleData.filter(() => Math.random() < samplingRate);
+    }
+    console.log(`Showing ${visiblePoints.length} of ${roadData.length} total points (sampling)`);
+  }
+  
+  // Check for special highlighting
+  const highlightSidewalkGaps = document.getElementById('highlight-sidewalk-gaps')?.checked;
+  const highlightCrashSegments = document.getElementById('highlight-crash-segments')?.checked;
+  
+  if (highlightSidewalkGaps || highlightCrashSegments) {
+    // Split data into categories for visualization
+    roadData = visiblePoints.filter(point => {
+      const isSidewalkGap = point.pedestrian_feasible === 1 && point.Sidewalks === 0;
+      const isCrashSegment = point.crash_risk_score === 10;
+      
+      if (highlightSidewalkGaps && isSidewalkGap) {
+        sidewalkGaps.push(point);
         return false;
       }
       
-      // Apply pedestrian feasible filter
-      if (filters.pedestrianFeasible.checked && 
-          props[CONFIG.data.fields.pedestrianFeasible] !== 1) {
-        return false;
-      }
-      
-      // Apply urban context filter
-      if (filters.urbanContext.checked && 
-          props[CONFIG.data.fields.urbanContext] !== 1) {
+      if (highlightCrashSegments && isCrashSegment) {
+        crashSegments.push(point);
         return false;
       }
       
       return true;
     });
-    
-    filteredData = filteredData.concat(filtered);
-  });
-  
-  // Update deck.gl visualization
-  updateDeckGLLayers();
-}
-
-// Update deck.gl layers with filtered data
-function updateDeckGLLayers() {
-  if (!deckOverlay || filteredData.length === 0) return;
-  
-  // Create separate datasets for sidewalks and regular road segments
-  let sidewalkData = [];
-  let roadData = [];
-  
-  if (filters.existingSidewalks.checked) {
-    // Split data into sidewalks and roads
-    filteredData.forEach(feature => {
-      if (feature.properties[CONFIG.data.fields.sidewalks] === 1) {
-        sidewalkData.push(feature);
-      } else {
-        roadData.push(feature);
-      }
-    });
   } else {
-    // All features treated as roads
-    roadData = filteredData;
+    roadData = visiblePoints;
   }
   
-  // Create layers
+  // Create layers array
   const layers = [];
   
-  // Road segments layer
-  if (roadData.length > 0) {
+  // Main data layer
+  layers.push(
+    new deck.ScatterplotLayer({
+      id: 'demand-points',
+      data: roadData,
+      getPosition: d => d.position,
+      getFillColor: d => getColor(d.DemandRank),
+      getRadius: 15,
+      radiusUnits: 'meters',
+      radiusMinPixels: 2,
+      radiusMaxPixels: 20,
+      pickable: true,
+      opacity: 0.7,
+      stroked: false,
+      onClick: info => handleClick(info),
+      onHover: info => handleHover(info)
+    })
+  );
+  
+  // Sidewalk gaps layer (if enabled)
+  if (highlightSidewalkGaps && sidewalkGaps.length > 0) {
     layers.push(
-      new deck.GeoJsonLayer({
-        id: 'road-layer',
-        data: {
-          type: 'FeatureCollection',
-          features: roadData
-        },
+      new deck.ScatterplotLayer({
+        id: 'sidewalk-gaps',
+        data: sidewalkGaps,
+        getPosition: d => d.position,
+        getFillColor: [76, 175, 80], // Green
+        getRadius: 18,
+        radiusUnits: 'meters',
+        radiusMinPixels: 3,
+        radiusMaxPixels: 22,
         pickable: true,
-        stroked: false,
-        filled: true,
-        extruded: false,
-        lineWidthScale: 20,
-        lineWidthMinPixels: 2,
-        lineWidthMaxPixels: 5,
-        lineJointRounded: true,
-        getLineColor: feature => getColorForScore(feature.properties[CONFIG.data.fields.demandRank]),
-        getLineWidth: 5,
+        opacity: 0.8,
+        stroked: true,
+        strokeWidth: 2,
+        onClick: info => handleClick(info),
         onHover: info => handleHover(info)
       })
     );
   }
   
-  // Sidewalk layer
-  if (sidewalkData.length > 0) {
+  // Crash segments layer (if enabled)
+  if (highlightCrashSegments && crashSegments.length > 0) {
     layers.push(
-      new deck.GeoJsonLayer({
-        id: 'sidewalk-layer',
-        data: {
-          type: 'FeatureCollection',
-          features: sidewalkData
-        },
+      new deck.ScatterplotLayer({
+        id: 'crash-segments',
+        data: crashSegments,
+        getPosition: d => d.position,
+        getFillColor: [255, 87, 34], // Orange
+        getRadius: 18,
+        radiusUnits: 'meters',
+        radiusMinPixels: 3,
+        radiusMaxPixels: 22,
         pickable: true,
-        stroked: false,
-        filled: true,
-        extruded: false,
-        lineWidthScale: 20,
-        lineWidthMinPixels: 2,
-        lineWidthMaxPixels: 5,
-        lineJointRounded: true,
-        getLineColor: [76, 175, 80], // Green color for sidewalks
-        getLineWidth: 5,
+        opacity: 0.8,
+        stroked: true,
+        strokeWidth: 2,
+        onClick: info => handleClick(info),
         onHover: info => handleHover(info)
       })
     );
   }
   
-  // Update deck.gl overlay with new layers
-  deckOverlay.setProps({
-    layers: layers
+  // Update the deck.gl overlay
+  deckOverlay.setProps({ layers });
+}
+
+// Get color for a score
+function getColor(score) {
+  if (score >= 70) return [127, 0, 0, 220]; // Very high
+  if (score >= 60) return [183, 28, 28, 220]; // High
+  if (score >= 50) return [198, 40, 40, 220]; // Medium-high
+  if (score >= 40) return [211, 47, 47, 220]; // Medium
+  if (score >= 30) return [229, 57, 53, 220]; // Medium-low
+  if (score >= 20) return [239, 83, 80, 220]; // Low
+  return [255, 205, 210, 220]; // Very low
+}
+
+// Handle click on a point
+function handleClick(info) {
+  if (!info.object) return;
+  
+  const point = info.object;
+  
+  // Create info window content
+  const content = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5;">
+      <h3 style="margin: 0 0 8px; color: #d32f2f;">DemandRank: ${point.DemandRank.toFixed(1)}</h3>
+      ${point.route_id ? `<p><strong>Route:</strong> ${point.route_id}</p>` : ''}
+      ${point.begin_poin ? `<p><strong>Milepoint:</strong> ${point.begin_poin}</p>` : ''}
+      <p><strong>Census Score:</strong> ${point.census_score || 'N/A'}</p>
+      <p><strong>Crash Risk:</strong> ${point.crash_risk_score || 'N/A'}</p>
+      <p><strong>Sidewalks:</strong> ${point.Sidewalks ? 'Yes' : 'No'}</p>
+      <p><strong>Pedestrian Feasible:</strong> ${point.pedestrian_feasible ? 'Yes' : 'No'}</p>
+      <p><strong>Urban Context:</strong> ${point.urban_context ? 'Urban' : 'Rural'}</p>
+      <hr>
+      <p><strong>Coords:</strong> ${point.position[1].toFixed(6)}, ${point.position[0].toFixed(6)}</p>
+    </div>
+  `;
+  
+  // Create and show info window
+  const infoWindow = new google.maps.InfoWindow({
+    content: content,
+    position: { lat: point.position[1], lng: point.position[0] }
   });
-}
-
-// Get color for a DemandRank score
-function getColorForScore(score) {
-  // Find the color range for this score
-  const colorRange = CONFIG.demandRank.colors.find(
-    range => score >= range.min && score <= range.max
-  ) || CONFIG.demandRank.colors[CONFIG.demandRank.colors.length - 1];
   
-  // Convert hex color to RGB array
-  return hexToRgb(colorRange.color);
+  infoWindow.open(map);
 }
 
-// Convert hex color to RGB array
-function hexToRgb(hex) {
-  const result = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(hex);
-  return result ? [
-    parseInt(result[1], 16),
-    parseInt(result[2], 16),
-    parseInt(result[3], 16)
-  ] : [0, 0, 0];
-}
-
-// Handle hover events on features
+// Handle hover over a point
 function handleHover(info) {
-  // Show info tooltip on hover
-  if (info.object) {
-    const props = info.object.properties;
-    
-    // Create tooltip content
-    const tooltipContent = `
-      <div style="padding: 10px; background: white; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.3);">
-        <h3>DemandRank: ${props[CONFIG.data.fields.demandRank].toFixed(2)}</h3>
-        <p><strong>Census Score:</strong> ${props[CONFIG.data.fields.censusScore]}</p>
-        <p><strong>Crash Risk Score:</strong> ${props[CONFIG.data.fields.crashRiskScore]}</p>
-        <p><strong>Pedestrian Feasible:</strong> ${props[CONFIG.data.fields.pedestrianFeasible] ? 'Yes' : 'No'}</p>
-        <p><strong>Urban Context:</strong> ${props[CONFIG.data.fields.urbanContext] ? 'Urban' : 'Rural'}</p>
-        <p><strong>Existing Sidewalks:</strong> ${props[CONFIG.data.fields.sidewalks] ? 'Yes' : 'No'}</p>
-      </div>
-    `;
-    
-    // Show tooltip (in a real implementation, you would use a tooltip library or custom elements)
-    console.log(tooltipContent);
+  // We can implement hover effects if needed
+  // For now, we'll use the click handler for info display
+}
+
+// Search by route ID
+function searchByRouteId(routeId) {
+  if (!routeId || !isDataLoaded) return;
+  
+  routeId = routeId.trim().toUpperCase();
+  
+  // Find matching points
+  const matches = pointsData.filter(point => 
+    point.route_id && point.route_id.toUpperCase() === routeId
+  );
+  
+  if (matches.length === 0) {
+    alert(`No points found for Route ID: ${routeId}`);
+    return;
   }
+  
+  // Calculate bounds of matched points
+  const bounds = new google.maps.LatLngBounds();
+  
+  matches.forEach(point => {
+    bounds.extend({ lat: point.position[1], lng: point.position[0] });
+  });
+  
+  // Pan to bounds
+  map.fitBounds(bounds);
+  
+  // Highlight that this is a filtered view
+  document.getElementById('loadingStatus').textContent = `Showing ${matches.length} points for Route ${routeId}`;
 }
 
 // Export filtered data as CSV
 function exportCSV() {
   if (filteredData.length === 0) {
-    alert('No data to export. Please adjust your filters to show some data.');
+    alert('No data to export. Please adjust filters to show some data.');
     return;
   }
   
-  // Create CSV headers
-  const fields = CONFIG.data.fields;
-  const headers = [
-    'demand_rank',
-    'census_score',
-    'crash_risk_score',
-    'functional_class_score',
-    'school_proximity_score',
-    'trail_proximity_score',
-    'rail_proximity_score',
-    'bus_proximity_score',
-    'pedestrian_feasible',
-    'urban_context',
-    'sidewalks'
-  ];
+  // Define CSV headers based on data
+  const samplePoint = filteredData[0];
+  const fields = Object.keys(samplePoint).filter(key => 
+    // Exclude position field and other unwanted fields
+    key !== 'position' && typeof samplePoint[key] !== 'function' && typeof samplePoint[key] !== 'object'
+  );
   
   // Create CSV content
-  let csvContent = 'data:text/csv;charset=utf-8,' + headers.join(',') + '\n';
+  let csvContent = 'data:text/csv;charset=utf-8,' + fields.join(',') + '\n';
   
   // Add data rows
-  filteredData.forEach(feature => {
-    const props = feature.properties;
-    const row = headers.map(header => {
-      const value = props[fields[camelCaseToSnakeCase(header)]];
-      return typeof value === 'undefined' ? '' : value;
+  filteredData.forEach(point => {
+    const row = fields.map(field => {
+      const value = point[field];
+      // Handle string values with commas
+      if (typeof value === 'string' && value.includes(',')) {
+        return `"${value}"`;
+      }
+      return value;
     });
     csvContent += row.join(',') + '\n';
   });
@@ -644,50 +780,116 @@ function exportCSV() {
   document.body.removeChild(link);
 }
 
-// Export filtered data as GeoJSON
-function exportGeoJSON() {
-  if (filteredData.length === 0) {
-    alert('No data to export. Please adjust your filters to show some data.');
-    return;
+// Share current view (copy URL with state)
+function shareCurrentView() {
+  try {
+    // Get current view state
+    const state = {
+      c: [map.getCenter().lat(), map.getCenter().lng()], // center coordinates
+      z: map.getZoom(), // zoom level
+      f: { // filters
+        min: parseInt(document.getElementById('min-score').value),
+        max: parseInt(document.getElementById('max-score').value),
+        pf: document.getElementById('pedestrian-feasible')?.checked || false,
+        uc: document.getElementById('urban-context')?.checked || false,
+        sg: document.getElementById('highlight-sidewalk-gaps')?.checked || false,
+        cs: document.getElementById('highlight-crash-segments')?.checked || false
+      },
+      w: currentWeights, // weights
+      p: document.querySelector('input[name="preset"]:checked')?.value || 'none' // preset
+    };
+    
+    // Create URL with state
+    const url = new URL(window.location.href);
+    url.hash = btoa(JSON.stringify(state)); // Base64 encode state
+    
+    // Copy URL to clipboard
+    navigator.clipboard.writeText(url.toString())
+      .then(() => {
+        // Show success message
+        const button = document.getElementById('copy-link');
+        const originalText = button.textContent;
+        button.textContent = 'Copied!';
+        setTimeout(() => {
+          button.textContent = originalText;
+        }, 2000);
+      })
+      .catch(err => {
+        console.error('Error copying URL:', err);
+        alert('Could not copy URL. Please try again.');
+      });
+  } catch (error) {
+    console.error('Error creating shareable URL:', error);
   }
-  
-  // Create GeoJSON object
-  const geoJson = {
-    type: 'FeatureCollection',
-    features: filteredData
-  };
-  
-  // Convert to string
-  const geoJsonString = JSON.stringify(geoJson);
-  
-  // Download GeoJSON
-  const blob = new Blob([geoJsonString], {type: 'application/json'});
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', 'pedestrian_demandrank.geojson');
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
 }
 
-// Convert camelCase to snake_case
-function camelCaseToSnakeCase(str) {
-  return str.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`);
+// Load state from URL hash
+function loadStateFromUrl() {
+  if (!window.location.hash) return;
+  
+  try {
+    const hash = window.location.hash.substring(1);
+    const state = JSON.parse(atob(hash));
+    
+    // Set map position
+    if (state.c && state.c.length === 2) {
+      map.setCenter({ lat: state.c[0], lng: state.c[1] });
+    }
+    
+    if (state.z) {
+      map.setZoom(state.z);
+    }
+    
+    // Set filters
+    if (state.f) {
+      if (state.f.min) document.getElementById('min-score').value = state.f.min;
+      if (state.f.max) document.getElementById('max-score').value = state.f.max;
+      if (document.getElementById('min-score-value')) {
+        document.getElementById('min-score-value').textContent = state.f.min;
+      }
+      if (document.getElementById('max-score-value')) {
+        document.getElementById('max-score-value').textContent = state.f.max;
+      }
+      
+      if (document.getElementById('pedestrian-feasible')) {
+        document.getElementById('pedestrian-feasible').checked = state.f.pf;
+      }
+      if (document.getElementById('urban-context')) {
+        document.getElementById('urban-context').checked = state.f.uc;
+      }
+      if (document.getElementById('highlight-sidewalk-gaps')) {
+        document.getElementById('highlight-sidewalk-gaps').checked = state.f.sg;
+      }
+      if (document.getElementById('highlight-crash-segments')) {
+        document.getElementById('highlight-crash-segments').checked = state.f.cs;
+      }
+    }
+    
+    // Set weights
+    if (state.w) {
+      currentWeights = state.w;
+      Object.entries(state.w).forEach(([key, value]) => {
+        const input = document.getElementById(`${key}-weight`);
+        if (input) {
+          input.value = value;
+          const valueDisplay = input.parentElement.querySelector('.weight-value');
+          if (valueDisplay) {
+            valueDisplay.textContent = `${Math.round(value * 100)}%`;
+          }
+        }
+      });
+      updateTotalWeight();
+    }
+    
+    // Set preset
+    if (state.p) {
+      const preset = document.querySelector(`input[name="preset"][value="${state.p}"]`);
+      if (preset) {
+        preset.checked = true;
+      }
+    }
+    
+  } catch (error) {
+    console.error('Error loading state from URL:', error);
+  }
 }
-
-// Helper function for debouncing events
-function debounce(func, wait) {
-  let timeout;
-  return function(...args) {
-    const context = this;
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func.apply(context, args), wait);
-  };
-}
-
-// Load app when DOM is ready
-window.addEventListener('DOMContentLoaded', function() {
-  // Custom initialization can be performed here before Google Maps loads
-});
