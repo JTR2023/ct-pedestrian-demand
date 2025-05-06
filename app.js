@@ -99,14 +99,39 @@ function setupEventListeners() {
   const toggleBtn = document.getElementById('toggle-advanced');
   const advancedPanel = document.querySelector('.advanced-panel');
   
-  toggleBtn.addEventListener('click', () => {
-    advancedPanel.classList.toggle('hidden');
-    // Also toggle expanded class for animation
-    advancedPanel.classList.toggle('expanded', !advancedPanel.classList.contains('hidden'));
-    toggleBtn.textContent = advancedPanel.classList.contains('hidden') 
-      ? 'Advanced Options ▼' 
-      : 'Advanced Options ▲';
-  });
+  if (toggleBtn && advancedPanel) {
+    // Ensure the panel starts hidden
+    advancedPanel.classList.add('hidden');
+    advancedPanel.classList.remove('expanded');
+    
+    toggleBtn.addEventListener('click', () => {
+      advancedPanel.classList.toggle('hidden');
+      // Also toggle expanded class for animation
+      advancedPanel.classList.toggle('expanded', !advancedPanel.classList.contains('hidden'));
+      toggleBtn.textContent = advancedPanel.classList.contains('hidden') 
+        ? 'Advanced Options ▼' 
+        : 'Advanced Options ▲';
+      
+      // Force a redraw of weight controls when panel is displayed
+      if (!advancedPanel.classList.contains('hidden')) {
+        setTimeout(() => {
+          // Update all weight displays
+          Object.entries(currentWeights).forEach(([key, value]) => {
+            const input = document.getElementById(`${key}-weight`);
+            if (input) {
+              input.value = value;
+              const label = input.parentElement.querySelector('label');
+              const valueDisplay = label ? label.querySelector('.weight-value') : input.parentElement.querySelector('.weight-value');
+              if (valueDisplay) {
+                valueDisplay.textContent = `${Math.round(value * 100)}%`;
+              }
+            }
+          });
+          updateTotalWeight();
+        }, 50);
+      }
+    });
+  }
   
   // DemandRank filter sliders
   const minScoreSlider = document.getElementById('min-score');
@@ -222,6 +247,25 @@ function setupEventListeners() {
             if (checkbox.checked) {
               streetViewContainer.classList.remove('hidden');
               panorama.setVisible(true);
+              
+              // If we have a filtered dataset, try to show a point in the current view
+              if (filteredData && filteredData.length > 0) {
+                // Find a point in the current view bounds
+                const bounds = map.getBounds();
+                const visiblePoint = filteredData.find(point => {
+                  if (!point.position || point.position.length < 2) return false;
+                  const lat = point.position[1];
+                  const lng = point.position[0];
+                  return bounds.contains(new google.maps.LatLng(lat, lng));
+                });
+                
+                if (visiblePoint) {
+                  panorama.setPosition({ 
+                    lat: visiblePoint.position[1], 
+                    lng: visiblePoint.position[0] 
+                  });
+                }
+              }
             } else {
               streetViewContainer.classList.add('hidden');
               panorama.setVisible(false);
@@ -288,10 +332,29 @@ async function loadData() {
     const url = 'https://storage.googleapis.com/ct-pedestrian-demand-data/data/milepoints_data.json';
     updateLoadingStatus('Fetching data from Google Cloud Storage...', 10);
     
-    const data = await loadGeoJSON(url);
+    // Try to fetch and log headers to diagnose CORS issues
+    try {
+      const headResponse = await fetch(url, { method: 'HEAD' });
+      console.log('GCS Headers:', {
+        'content-type': headResponse.headers.get('content-type'),
+        'access-control-allow-origin': headResponse.headers.get('access-control-allow-origin'),
+        'status': headResponse.status
+      });
+    } catch (headError) {
+      console.warn('Could not fetch headers:', headError);
+    }
     
-    // Store parsed data
-    pointsData = data.features || data;
+    const data = await loadGeoJSON(url);
+    console.log('Data loaded successfully, sample:', data.type ? data.type : 'No type');
+    
+    // Store parsed data - ensure we extract features if it's a FeatureCollection
+    if (data && data.type === 'FeatureCollection' && Array.isArray(data.features)) {
+      pointsData = data.features;
+      console.log(`Extracted ${pointsData.length} features from FeatureCollection`);
+    } else {
+      pointsData = data;
+      console.log('Data was not a standard FeatureCollection');
+    }
     
     // Normalize data if needed
     normalizeData();
@@ -776,11 +839,23 @@ function handleClick(info) {
   if (!info.object) return;
   
   const point = info.object;
+  console.log('Clicked point:', point); // For debugging
   
-  // Create info window content
+  // Ensure position exists and is valid
+  if (!point.position || !Array.isArray(point.position) || point.position.length < 2) {
+    console.error('Invalid position data for clicked point:', point);
+    return;
+  }
+  
+  // Create info window content - with safe value handling
+  const getDemandRank = () => {
+    try { return point.DemandRank.toFixed(1); } 
+    catch (e) { return point.DemandRank || 'N/A'; }
+  };
+  
   const content = `
     <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-      <h3 style="margin: 0 0 8px; color: #d32f2f;">DemandRank: ${point.DemandRank.toFixed(1)}</h3>
+      <h3 style="margin: 0 0 8px; color: #d32f2f;">DemandRank: ${getDemandRank()}</h3>
       ${point.route_id ? `<p><strong>Route:</strong> ${point.route_id}</p>` : ''}
       ${point.begin_poin ? `<p><strong>Milepoint:</strong> ${point.begin_poin}</p>` : ''}
       <p><strong>Census Score:</strong> ${point.census_score || 'N/A'}</p>
@@ -790,6 +865,9 @@ function handleClick(info) {
       <p><strong>Urban Context:</strong> ${point.urban_context ? 'Urban' : 'Rural'}</p>
       <hr>
       <p><strong>Coords:</strong> ${point.position[1].toFixed(6)}, ${point.position[0].toFixed(6)}</p>
+      <button id="view-in-streetview" style="margin-top:10px;padding:5px;background:#d32f2f;color:white;border:none;border-radius:4px;cursor:pointer;">
+        View in Street View
+      </button>
     </div>
   `;
   
@@ -801,7 +879,23 @@ function handleClick(info) {
   
   infoWindow.open(map);
   
-  // If street view is enabled, show the location in street view
+  // Add event listener for Street View button after the info window is shown
+  google.maps.event.addListener(infoWindow, 'domready', function() {
+    document.getElementById('view-in-streetview').addEventListener('click', function() {
+      const streetViewContainer = document.getElementById('street-view');
+      if (streetViewContainer) {
+        streetViewContainer.classList.remove('hidden');
+        panorama.setPosition({ lat: point.position[1], lng: point.position[0] });
+        panorama.setVisible(true);
+        
+        // Also enable the checkbox
+        const streetViewCheckbox = document.getElementById('show-street-view');
+        if (streetViewCheckbox) streetViewCheckbox.checked = true;
+      }
+    });
+  });
+  
+  // If street view is already enabled, show the location in street view
   const showStreetView = document.getElementById('show-street-view')?.checked;
   if (showStreetView) {
     const streetViewContainer = document.getElementById('street-view');
