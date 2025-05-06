@@ -5,8 +5,10 @@ This guide will help you set up Google Cloud Storage to host your GeoJSON data f
 ## 1. Create a Google Cloud Project
 
 1. Go to https://console.cloud.google.com/
-2. Create a new project (or use an existing one)
-3. Note your Project ID for later use
+2. Sign in with your Google account (jtruss.info@gmail.com)
+3. Create a new project (or use an existing one)
+4. Name it "ct-pedestrian-demand"
+5. Note your Project ID for later use
 
 ## 2. Set Up a Cloud Storage Bucket
 

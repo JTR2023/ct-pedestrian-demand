@@ -100,37 +100,52 @@ function setupEventListeners() {
   const advancedPanel = document.querySelector('.advanced-panel');
   
   if (toggleBtn && advancedPanel) {
-    // Ensure the panel starts hidden
+    // Ensure the panel starts hidden by default
     advancedPanel.classList.add('hidden');
     advancedPanel.classList.remove('expanded');
     
     toggleBtn.addEventListener('click', () => {
+      // Toggle the hidden class
       advancedPanel.classList.toggle('hidden');
-      // Also toggle expanded class for animation
-      advancedPanel.classList.toggle('expanded', !advancedPanel.classList.contains('hidden'));
-      toggleBtn.textContent = advancedPanel.classList.contains('hidden') 
-        ? 'Advanced Options ▼' 
-        : 'Advanced Options ▲';
+      
+      // Toggle expanded class for animation (opposite of hidden)
+      const isExpanded = !advancedPanel.classList.contains('hidden');
+      advancedPanel.classList.toggle('expanded', isExpanded);
+      
+      // Update button text
+      toggleBtn.textContent = isExpanded 
+        ? 'Advanced Options ▲' 
+        : 'Advanced Options ▼';
+      
+      console.log(`Advanced panel toggled, isExpanded: ${isExpanded}`);
       
       // Force a redraw of weight controls when panel is displayed
-      if (!advancedPanel.classList.contains('hidden')) {
+      if (isExpanded) {
+        // Use a short timeout to allow the panel to become visible first
         setTimeout(() => {
+          console.log('Updating weight displays after panel expansion');
           // Update all weight displays
           Object.entries(currentWeights).forEach(([key, value]) => {
             const input = document.getElementById(`${key}-weight`);
             if (input) {
               input.value = value;
               const label = input.parentElement.querySelector('label');
-              const valueDisplay = label ? label.querySelector('.weight-value') : input.parentElement.querySelector('.weight-value');
+              const valueDisplay = label ? label.querySelector('.weight-value') : null;
+              
               if (valueDisplay) {
                 valueDisplay.textContent = `${Math.round(value * 100)}%`;
               }
             }
           });
           updateTotalWeight();
-        }, 50);
+        }, 100);
       }
     });
+    
+    // For debugging
+    console.log('Advanced panel toggle initialized');
+  } else {
+    console.warn('Toggle button or advanced panel not found in DOM');
   }
   
   // DemandRank filter sliders
@@ -184,11 +199,18 @@ function setupEventListeners() {
   
   // Update weights when sliders change
   Object.entries(weightInputs).forEach(([key, input]) => {
-    if (!input) return;
+    if (!input) {
+      console.warn(`Weight slider for ${key} not found in DOM`);
+      return;
+    }
     
-    // Find the weight value display more specifically in the label element
+    // Find the weight value display in the label element
     const label = input.parentElement.querySelector('label');
-    const valueDisplay = label ? label.querySelector('.weight-value') : input.parentElement.querySelector('.weight-value');
+    const valueDisplay = label ? label.querySelector('.weight-value') : null;
+    
+    if (!valueDisplay) {
+      console.warn(`Value display for ${key} not found`);
+    }
     
     input.addEventListener('input', () => {
       const value = parseFloat(input.value);
@@ -206,12 +228,20 @@ function setupEventListeners() {
     if (input) {
       input.value = value;
       const label = input.parentElement.querySelector('label');
-      const valueDisplay = label ? label.querySelector('.weight-value') : input.parentElement.querySelector('.weight-value');
+      const valueDisplay = label ? label.querySelector('.weight-value') : null;
+      
       if (valueDisplay) {
         valueDisplay.textContent = `${Math.round(value * 100)}%`;
+      } else {
+        console.warn(`Value display for ${key} not found during initialization`);
       }
+    } else {
+      console.warn(`Weight slider for ${key} not found during initialization`);
     }
   });
+  
+  // Ensure total weight is calculated on initialization
+  updateTotalWeight();
   
   // Recalculate button
   const recalculateBtn = document.getElementById('recalculate');
@@ -235,41 +265,96 @@ function setupEventListeners() {
   
   filterCheckboxes.forEach(id => {
     const checkbox = document.getElementById(id);
-    if (checkbox) {
+    if (!checkbox) {
+      console.warn(`Checkbox with ID ${id} not found in the DOM`);
+      return;
+    }
+    
+    // For regular filter checkboxes
+    if (id !== 'show-street-view') {
       checkbox.addEventListener('change', () => {
         if (isDataLoaded) {
           filterAndUpdateMap();
         }
+      });
+    } 
+    // Special handling for the Street View checkbox
+    else {
+      checkbox.addEventListener('change', () => {
+        const streetViewContainer = document.getElementById('street-view');
+        if (!streetViewContainer) {
+          console.error('Street view container not found');
+          return;
+        }
         
-        if (id === 'show-street-view') {
-          const streetViewContainer = document.getElementById('street-view');
-          if (streetViewContainer) {
-            if (checkbox.checked) {
-              streetViewContainer.classList.remove('hidden');
+        console.log('Street view checkbox toggled:', checkbox.checked);
+        
+        if (checkbox.checked) {
+          // Show street view
+          streetViewContainer.classList.remove('hidden');
+          
+          try {
+            // Try to make the panorama visible
+            if (panorama) {
               panorama.setVisible(true);
               
               // If we have a filtered dataset, try to show a point in the current view
               if (filteredData && filteredData.length > 0) {
+                console.log('Looking for a good point to show in street view');
+                
                 // Find a point in the current view bounds
                 const bounds = map.getBounds();
-                const visiblePoint = filteredData.find(point => {
+                const visiblePoints = filteredData.filter(point => {
                   if (!point.position || point.position.length < 2) return false;
                   const lat = point.position[1];
                   const lng = point.position[0];
                   return bounds.contains(new google.maps.LatLng(lat, lng));
                 });
                 
-                if (visiblePoint) {
-                  panorama.setPosition({ 
-                    lat: visiblePoint.position[1], 
-                    lng: visiblePoint.position[0] 
+                console.log(`Found ${visiblePoints.length} visible points to try for street view`);
+                
+                // Try to find a point with street view coverage
+                if (visiblePoints.length > 0) {
+                  const pointToShow = visiblePoints[Math.floor(Math.random() * visiblePoints.length)];
+                  const position = { 
+                    lat: pointToShow.position[1], 
+                    lng: pointToShow.position[0] 
+                  };
+                  
+                  console.log('Setting street view position to:', position);
+                  panorama.setPosition(position);
+                  
+                  // Add a marker to show where street view is looking
+                  const svMarker = new google.maps.Marker({
+                    position: position,
+                    map: map,
+                    icon: {
+                      path: google.maps.SymbolPath.CIRCLE,
+                      scale: 7,
+                      fillColor: '#4285F4',
+                      fillOpacity: 1,
+                      strokeColor: '#ffffff',
+                      strokeWeight: 2
+                    }
                   });
+                  
+                  // Remove marker when street view is hidden
+                  setTimeout(() => {
+                    svMarker.setMap(null);
+                  }, 5000);
                 }
               }
             } else {
-              streetViewContainer.classList.add('hidden');
-              panorama.setVisible(false);
+              console.error('Panorama not initialized');
             }
+          } catch (error) {
+            console.error('Error showing street view:', error);
+          }
+        } else {
+          // Hide street view
+          streetViewContainer.classList.add('hidden');
+          if (panorama) {
+            panorama.setVisible(false);
           }
         }
       });
@@ -326,6 +411,7 @@ function setupEventListeners() {
 // Load data from Google Cloud Storage
 async function loadData() {
   updateLoadingStatus('Initializing...', 0);
+  console.log('Starting data loading process...');
   
   try {
     // Load the single GeoJSON file from Google Cloud Storage
@@ -344,20 +430,65 @@ async function loadData() {
       console.warn('Could not fetch headers:', headError);
     }
     
+    console.log('Fetching main data from:', url);
     const data = await loadGeoJSON(url);
-    console.log('Data loaded successfully, sample:', data.type ? data.type : 'No type');
+    
+    // Validate data structure
+    if (!data) {
+      throw new Error('Received null or undefined data from GCS');
+    }
+    
+    console.log('Data loaded successfully, type:', data.type ? data.type : 'No type');
     
     // Store parsed data - ensure we extract features if it's a FeatureCollection
     if (data && data.type === 'FeatureCollection' && Array.isArray(data.features)) {
       pointsData = data.features;
       console.log(`Extracted ${pointsData.length} features from FeatureCollection`);
-    } else {
+    } else if (Array.isArray(data)) {
       pointsData = data;
-      console.log('Data was not a standard FeatureCollection');
+      console.log(`Data is an array with ${pointsData.length} items`);
+    } else {
+      console.warn('Data is not in expected format. Attempting to convert:', typeof data);
+      
+      // Try to handle unexpected formats
+      if (typeof data === 'object') {
+        // Maybe it's a single feature?
+        if (data.type === 'Feature' && data.geometry) {
+          pointsData = [data];
+          console.log('Converted single Feature to array');
+        } else {
+          // Try to extract any array-like data
+          const possibleArrays = Object.values(data).filter(val => Array.isArray(val));
+          if (possibleArrays.length > 0) {
+            // Use the largest array found
+            pointsData = possibleArrays.reduce((a, b) => a.length > b.length ? a : b);
+            console.log(`Extracted array with ${pointsData.length} items from object`);
+          } else {
+            // Create a single-item array as last resort
+            pointsData = [data];
+            console.log('Converted object to single-item array as fallback');
+          }
+        }
+      } else {
+        throw new Error(`Unexpected data format: ${typeof data}`);
+      }
     }
     
-    // Normalize data if needed
+    // Safety check
+    if (!Array.isArray(pointsData)) {
+      console.error('pointsData is not an array after processing:', pointsData);
+      pointsData = [];
+    }
+    
+    // Normalize data
+    updateLoadingStatus('Normalizing data structure...', 70);
     normalizeData();
+    
+    if (pointsData.length === 0) {
+      console.error('No valid data points after normalization!');
+      updateLoadingStatus('Error: No valid data points were found', 100, true);
+      return;
+    }
     
     // Update UI
     document.getElementById('totalPoints').textContent = pointsData.length.toLocaleString();
@@ -365,7 +496,14 @@ async function loadData() {
     
     // Setup complete - filter and show data
     isDataLoaded = true;
+    
+    // Recalculate DemandRank with current weights
+    recalculateDemandRank();
+    
+    // Filter and update map
     filterAndUpdateMap();
+    
+    console.log('Initial data display complete');
     
   } catch (error) {
     console.error('Error loading data:', error);
@@ -485,6 +623,9 @@ function normalizeData() {
       console.log("Normalizing GeoJSON Features");
       // Handle proper GeoJSON Features
       pointsData = pointsData.map(feature => {
+        // Handle null or undefined features
+        if (!feature) return null;
+        
         const properties = feature.properties || {};
         const geometry = feature.geometry || {};
         const coordinates = geometry.coordinates || [];
@@ -504,11 +645,61 @@ function normalizeData() {
           }
         }
         
+        // Fix common field naming issues
+        const demandRank = properties.DemandRank || properties.demand_rank || 0;
+        const censusScore = properties.census_score || properties.Census_Score || 0;
+        const crashRiskScore = properties.crash_risk_score || properties.Crash_Risk_Score || 0;
+        const functionalClassScore = properties.functional_class_score || properties.Functional_Class_Score || 0;
+        const schoolProximityScore = properties.school_proximity_score || properties.School_Proximity_Score || 0;
+        const trailProximityScore = properties.trail_proximity_score || properties.Trail_Proximity_Score || 0;
+        const railProximityScore = properties.rail_proximity_score || properties.Rail_Proximity_Score || 0;
+        const busProximityScore = properties.bus_proximity_score || properties.Bus_Proximity_Score || 0;
+        
         return {
           ...properties,
           geometry: geometry,
+          // Ensure consistent property naming with fallbacks
+          DemandRank: demandRank,
+          census_score: censusScore,
+          crash_risk_score: crashRiskScore,
+          functional_class_score: functionalClassScore,
+          school_proximity_score: schoolProximityScore,
+          trail_proximity_score: trailProximityScore,
+          rail_proximity_score: railProximityScore,
+          bus_proximity_score: busProximityScore,
+          pedestrian_feasible: properties.pedestrian_feasible || properties.Pedestrian_Feasible || 0,
+          urban_context: properties.urban_context || properties.Urban_Context || 0,
+          Sidewalks: properties.Sidewalks || properties.sidewalks || 0,
+          position: position
+        };
+      });
+    } else {
+      console.log("Normalizing non-Feature data");
+      // Handle other array format
+      pointsData = pointsData.map(point => {
+        // Handle null or undefined points
+        if (!point) return null;
+        
+        const properties = point.properties || point;
+        let position = properties.position;
+        
+        if (!position) {
+          if (point.geometry && point.geometry.coordinates) {
+            position = point.geometry.coordinates;
+          } else if (properties.longitude != null && properties.latitude != null) {
+            position = [properties.longitude, properties.latitude];
+          } else if (properties.lng != null && properties.lat != null) {
+            position = [properties.lng, properties.lat];
+          }
+        }
+        
+        // Fix common field naming issues
+        const demandRank = properties.DemandRank || properties.demand_rank || 0;
+        
+        return {
+          ...properties,
           // Ensure consistent property naming
-          DemandRank: properties.DemandRank || properties.demand_rank || 0,
+          DemandRank: demandRank,
           census_score: properties.census_score || 0,
           crash_risk_score: properties.crash_risk_score || 0,
           functional_class_score: properties.functional_class_score || 0,
@@ -518,34 +709,15 @@ function normalizeData() {
           bus_proximity_score: properties.bus_proximity_score || 0,
           pedestrian_feasible: properties.pedestrian_feasible || 0,
           urban_context: properties.urban_context || 0,
-          Sidewalks: properties.Sidewalks || 0,
-          position: position
-        };
-      });
-    } else {
-      console.log("Normalizing non-Feature data");
-      // Handle other array format
-      pointsData = pointsData.map(point => {
-        const properties = point.properties || point;
-        let position = properties.position;
-        
-        if (!position) {
-          if (point.geometry && point.geometry.coordinates) {
-            position = point.geometry.coordinates;
-          } else if (properties.longitude != null && properties.latitude != null) {
-            position = [properties.longitude, properties.latitude];
-          }
-        }
-        
-        return {
-          ...properties,
-          // Ensure consistent property naming
-          DemandRank: properties.DemandRank || properties.demand_rank || 0,
+          Sidewalks: properties.Sidewalks || properties.sidewalks || 0,
           position: position
         };
       });
     }
   }
+  
+  // Remove any null entries created during processing
+  pointsData = pointsData.filter(point => point !== null);
   
   // Filter out any entries without valid positions
   const initialCount = pointsData.length;
@@ -557,6 +729,8 @@ function normalizeData() {
   // Log a sample point for debugging
   if (pointsData.length > 0) {
     console.log("Sample normalized point:", pointsData[0]);
+  } else {
+    console.error("No valid data points after normalization!");
   }
 }
 
@@ -674,8 +848,14 @@ function filterAndUpdateMap() {
 
 // Update deck.gl layers
 function updateMapLayers() {
-  if (!deckOverlay || !filteredData) {
+  if (!deckOverlay) {
+    console.error('deck.gl overlay not initialized');
+    return;
+  }
+  
+  if (!filteredData) {
     console.log('No filtered data available to display');
+    deckOverlay.setProps({ layers: [] });
     return;
   }
   
@@ -687,17 +867,39 @@ function updateMapLayers() {
   }
   
   // Log summary for debugging
-  console.log(`Displaying ${filteredData.length} points on the map`);
+  console.log(`Preparing to display ${filteredData.length} points on the map`);
+  
+  // Validate data points before rendering
+  const validData = filteredData.filter(point => {
+    if (!point.position || !Array.isArray(point.position) || point.position.length < 2) {
+      return false;
+    }
+    // Validate latitude/longitude values
+    const lng = point.position[0];
+    const lat = point.position[1];
+    return !isNaN(lat) && !isNaN(lng) && 
+           lat >= -90 && lat <= 90 && 
+           lng >= -180 && lng <= 180;
+  });
+  
+  if (validData.length < filteredData.length) {
+    console.warn(`Filtered out ${filteredData.length - validData.length} points with invalid positions`);
+  }
+  
+  if (validData.length === 0) {
+    console.error('No valid points to display after position filtering');
+    deckOverlay.setProps({ layers: [] });
+    return;
+  }
   
   // Create datasets for different visualizations
-  let roadData = filteredData;
+  let roadData = validData;
   let sidewalkGaps = [];
   let crashSegments = [];
   
   // Get current view bounds to optimize rendering
   const bounds = map.getBounds();
   const inView = point => {
-    if (!point.position || !Array.isArray(point.position) || point.position.length < 2) return false;
     const lat = point.position[1];
     const lng = point.position[0];
     return lat >= bounds.getSouthWest().lat() && 
@@ -708,11 +910,13 @@ function updateMapLayers() {
   
   // Limit points if too many to render efficiently
   const maxPointsToRender = 100000;
-  let visiblePoints = roadData;
+  let visiblePoints;
   
   if (roadData.length > maxPointsToRender) {
     // If too many points, prioritize visible ones and sample others
     const visibleData = roadData.filter(inView);
+    console.log(`${visibleData.length} points in current view`);
+    
     if (visibleData.length < maxPointsToRender) {
       // We can show all visible points and sample the rest
       const remainingPoints = roadData.filter(p => !inView(p));
@@ -725,33 +929,39 @@ function updateMapLayers() {
       visiblePoints = visibleData.filter(() => Math.random() < samplingRate);
     }
     console.log(`Showing ${visiblePoints.length} of ${roadData.length} total points (sampling)`);
+  } else {
+    visiblePoints = roadData;
   }
   
   // Check for special highlighting
   const highlightSidewalkGaps = document.getElementById('highlight-sidewalk-gaps')?.checked;
   const highlightCrashSegments = document.getElementById('highlight-crash-segments')?.checked;
   
+  // Split data into categories for visualization
   if (highlightSidewalkGaps || highlightCrashSegments) {
-    // Split data into categories for visualization
-    roadData = visiblePoints.filter(point => {
+    // Create a temporary array for the main road data
+    const filteredRoadData = [];
+    
+    // Classify each point
+    for (const point of visiblePoints) {
       const isSidewalkGap = point.pedestrian_feasible === 1 && point.Sidewalks === 0;
       const isCrashSegment = point.crash_risk_score === 10;
       
       if (highlightSidewalkGaps && isSidewalkGap) {
         sidewalkGaps.push(point);
-        return false;
-      }
-      
-      if (highlightCrashSegments && isCrashSegment) {
+      } else if (highlightCrashSegments && isCrashSegment) {
         crashSegments.push(point);
-        return false;
+      } else {
+        filteredRoadData.push(point);
       }
-      
-      return true;
-    });
+    }
+    
+    roadData = filteredRoadData;
   } else {
     roadData = visiblePoints;
   }
+  
+  console.log(`Final display counts: main=${roadData.length}, sidewalk gaps=${sidewalkGaps.length}, crash segments=${crashSegments.length}`);
   
   // Create layers array
   const layers = [];
@@ -820,7 +1030,12 @@ function updateMapLayers() {
   }
   
   // Update the deck.gl overlay
-  deckOverlay.setProps({ layers });
+  try {
+    deckOverlay.setProps({ layers });
+    console.log('Map layers updated successfully');
+  } catch (error) {
+    console.error('Error updating deck.gl layers:', error);
+  }
 }
 
 // Get color for a score
