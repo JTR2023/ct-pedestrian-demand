@@ -200,6 +200,8 @@ body {
 .advanced-panel.expanded {
   max-height: 2000px;
   opacity: 1;
+  display: block;
+  overflow: visible;
 }
 
 .advanced-panel.hidden {
@@ -208,8 +210,6 @@ body {
   overflow: hidden;
   padding: 0;
   margin: 0;
-  visibility: hidden;
-  display: none;
 }
 
 /* Weight Controls */
@@ -395,7 +395,7 @@ button:hover {
   height: 250px;
 }
 
-.hidden {
+.hidden:not(.advanced-panel) {
   display: none !important;
   opacity: 0;
 }

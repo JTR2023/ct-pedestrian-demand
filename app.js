@@ -29,6 +29,8 @@ const presetFilters = {
 
 // Initialize the map when Google Maps API loads
 function initMap() {
+  console.log("Initializing map...");
+  
   // Set up Google Map
   map = new google.maps.Map(document.getElementById('map'), {
     center: { lat: 41.6032, lng: -72.7266 },
@@ -45,25 +47,31 @@ function initMap() {
   });
   
   // Set up Street View
-  panorama = new google.maps.StreetViewPanorama(
-    document.getElementById('street-view'),
-    {
-      position: { lat: 41.6032, lng: -72.7266 },
-      pov: { heading: 0, pitch: 0 },
-      visible: false
-    }
-  );
-  map.setStreetView(panorama);
-  
-  // Hide UI in Street View
-  map.addListener('streetview_changed', () => {
-    const infoPanel = document.querySelector('.info-panel');
-    if (map.getStreetView().getVisible()) {
-      infoPanel.classList.add('hidden-in-streetview');
-    } else {
-      infoPanel.classList.remove('hidden-in-streetview');
-    }
-  });
+  const streetViewContainer = document.getElementById('street-view');
+  if (!streetViewContainer) {
+    console.error("Street View container not found in DOM");
+  } else {
+    panorama = new google.maps.StreetViewPanorama(
+      streetViewContainer,
+      {
+        position: { lat: 41.6032, lng: -72.7266 },
+        pov: { heading: 0, pitch: 0 },
+        visible: false
+      }
+    );
+    map.setStreetView(panorama);
+    console.log("Street View initialized");
+    
+    // Hide UI in Street View
+    map.addListener('streetview_changed', () => {
+      const infoPanel = document.querySelector('.info-panel');
+      if (map.getStreetView().getVisible()) {
+        infoPanel.classList.add('hidden-in-streetview');
+      } else {
+        infoPanel.classList.remove('hidden-in-streetview');
+      }
+    });
+  }
   
   // Update map layers when view changes (for large datasets)
   map.addListener('idle', () => {
@@ -96,56 +104,70 @@ function initDeckGL() {
 // Set up event listeners
 function setupEventListeners() {
   // Advanced panel toggle
+  console.log("Setting up advanced panel toggle...");
   const toggleBtn = document.getElementById('toggle-advanced');
   const advancedPanel = document.querySelector('.advanced-panel');
   
-  if (toggleBtn && advancedPanel) {
+  if (!toggleBtn) {
+    console.error("Advanced panel toggle button not found in DOM");
+  } else if (!advancedPanel) {
+    console.error("Advanced panel not found in DOM");
+  } else {
+    console.log("Advanced panel elements found");
+    
     // Ensure the panel starts hidden by default
     advancedPanel.classList.add('hidden');
     advancedPanel.classList.remove('expanded');
     
     toggleBtn.addEventListener('click', () => {
-      // Toggle the hidden class
-      advancedPanel.classList.toggle('hidden');
+      console.log("Advanced panel toggle clicked");
       
-      // Toggle expanded class for animation (opposite of hidden)
-      const isExpanded = !advancedPanel.classList.contains('hidden');
-      advancedPanel.classList.toggle('expanded', isExpanded);
-      
-      // Update button text
-      toggleBtn.textContent = isExpanded 
-        ? 'Advanced Options ▲' 
-        : 'Advanced Options ▼';
-      
-      console.log(`Advanced panel toggled, isExpanded: ${isExpanded}`);
-      
-      // Force a redraw of weight controls when panel is displayed
-      if (isExpanded) {
-        // Use a short timeout to allow the panel to become visible first
+      // Remove the display:none style first if it's present to allow transitions
+      if (advancedPanel.classList.contains('hidden')) {
+        advancedPanel.style.display = '';
+        
+        // Small delay to allow display style to take effect before removing hidden class
         setTimeout(() => {
-          console.log('Updating weight displays after panel expansion');
-          // Update all weight displays
-          Object.entries(currentWeights).forEach(([key, value]) => {
-            const input = document.getElementById(`${key}-weight`);
-            if (input) {
-              input.value = value;
-              const label = input.parentElement.querySelector('label');
-              const valueDisplay = label ? label.querySelector('.weight-value') : null;
-              
-              if (valueDisplay) {
-                valueDisplay.textContent = `${Math.round(value * 100)}%`;
+          advancedPanel.classList.remove('hidden');
+          advancedPanel.classList.add('expanded');
+          toggleBtn.textContent = 'Advanced Options ▲';
+          console.log("Advanced panel expanded");
+          
+          // Force a redraw of weight controls
+          setTimeout(() => {
+            console.log('Refreshing weight controls...');
+            Object.entries(currentWeights).forEach(([key, value]) => {
+              const input = document.getElementById(`${key}-weight`);
+              if (input) {
+                input.value = value;
+                const label = input.parentElement.querySelector('label');
+                const valueDisplay = label ? label.querySelector('.weight-value') : null;
+                
+                if (valueDisplay) {
+                  valueDisplay.textContent = `${Math.round(value * 100)}%`;
+                }
               }
-            }
-          });
-          updateTotalWeight();
-        }, 100);
+            });
+            updateTotalWeight();
+          }, 100);
+        }, 10);
+      } else {
+        // Hide the panel
+        advancedPanel.classList.remove('expanded');
+        advancedPanel.classList.add('hidden');
+        toggleBtn.textContent = 'Advanced Options ▼';
+        console.log("Advanced panel collapsed");
+        
+        // Set display:none after transition completes
+        setTimeout(() => {
+          if (advancedPanel.classList.contains('hidden')) {
+            advancedPanel.style.display = 'none';
+          }
+        }, 300); // Match the CSS transition duration
       }
     });
     
-    // For debugging
     console.log('Advanced panel toggle initialized');
-  } else {
-    console.warn('Toggle button or advanced panel not found in DOM');
   }
   
   // DemandRank filter sliders
@@ -187,6 +209,7 @@ function setupEventListeners() {
   });
   
   // Weight sliders
+  console.log("Setting up weight sliders...");
   const weightInputs = {
     census: document.getElementById('census-weight'),
     crash: document.getElementById('crash-weight'),
@@ -197,6 +220,11 @@ function setupEventListeners() {
     bus: document.getElementById('bus-weight')
   };
   
+  // Log weight inputs
+  console.log("Weight input elements found:", Object.entries(weightInputs)
+    .map(([key, input]) => `${key}: ${input ? 'found' : 'missing'}`)
+    .join(', '));
+  
   // Update weights when sliders change
   Object.entries(weightInputs).forEach(([key, input]) => {
     if (!input) {
@@ -206,17 +234,22 @@ function setupEventListeners() {
     
     // Find the weight value display in the label element
     const label = input.parentElement.querySelector('label');
-    const valueDisplay = label ? label.querySelector('.weight-value') : null;
+    if (!label) {
+      console.warn(`Label for ${key} not found`);
+      return;
+    }
     
+    const valueDisplay = label.querySelector('.weight-value');
     if (!valueDisplay) {
       console.warn(`Value display for ${key} not found`);
+      return;
     }
+    
+    console.log(`Setting up slider for ${key}`);
     
     input.addEventListener('input', () => {
       const value = parseFloat(input.value);
-      if (valueDisplay) {
-        valueDisplay.textContent = `${Math.round(value * 100)}%`;
-      }
+      valueDisplay.textContent = `${Math.round(value * 100)}%`;
       currentWeights[key] = value;
       updateTotalWeight();
     });
@@ -281,22 +314,29 @@ function setupEventListeners() {
     // Special handling for the Street View checkbox
     else {
       checkbox.addEventListener('change', () => {
+        console.log('Street view checkbox toggled:', checkbox.checked);
+        
         const streetViewContainer = document.getElementById('street-view');
         if (!streetViewContainer) {
           console.error('Street view container not found');
           return;
         }
         
-        console.log('Street view checkbox toggled:', checkbox.checked);
-        
         if (checkbox.checked) {
           // Show street view
+          console.log('Enabling Street View');
+          streetViewContainer.style.display = 'block'; // Force display first
           streetViewContainer.classList.remove('hidden');
           
           try {
             // Try to make the panorama visible
             if (panorama) {
-              panorama.setVisible(true);
+              console.log('Activating panorama');
+              
+              // Force reinitialization of panorama if needed
+              if (!panorama.getVisible()) {
+                panorama.setVisible(true);
+              }
               
               // If we have a filtered dataset, try to show a point in the current view
               if (filteredData && filteredData.length > 0) {
@@ -304,6 +344,11 @@ function setupEventListeners() {
                 
                 // Find a point in the current view bounds
                 const bounds = map.getBounds();
+                if (!bounds) {
+                  console.warn('Map bounds not available yet');
+                  return;
+                }
+                
                 const visiblePoints = filteredData.filter(point => {
                   if (!point.position || point.position.length < 2) return false;
                   const lat = point.position[1];
@@ -324,24 +369,50 @@ function setupEventListeners() {
                   console.log('Setting street view position to:', position);
                   panorama.setPosition(position);
                   
-                  // Add a marker to show where street view is looking
-                  const svMarker = new google.maps.Marker({
-                    position: position,
-                    map: map,
-                    icon: {
-                      path: google.maps.SymbolPath.CIRCLE,
-                      scale: 7,
-                      fillColor: '#4285F4',
-                      fillOpacity: 1,
-                      strokeColor: '#ffffff',
-                      strokeWeight: 2
+                  // Ensure Street View service is used to check for coverage
+                  const streetViewService = new google.maps.StreetViewService();
+                  streetViewService.getPanorama({
+                    location: position,
+                    radius: 50,
+                    preference: google.maps.StreetViewPreference.NEAREST
+                  }, (data, status) => {
+                    if (status === google.maps.StreetViewStatus.OK) {
+                      console.log('Street View available at this location');
+                      panorama.setPano(data.location.pano);
+                      
+                      // Add a marker to show where street view is looking
+                      const svMarker = new google.maps.Marker({
+                        position: position,
+                        map: map,
+                        icon: {
+                          path: google.maps.SymbolPath.CIRCLE,
+                          scale: 7,
+                          fillColor: '#4285F4',
+                          fillOpacity: 1,
+                          strokeColor: '#ffffff',
+                          strokeWeight: 2
+                        }
+                      });
+                      
+                      // Remove marker when street view is hidden
+                      setTimeout(() => {
+                        svMarker.setMap(null);
+                      }, 5000);
+                    } else {
+                      console.warn('No Street View available at this location, trying another point');
+                      // Try another point if available
+                      if (visiblePoints.length > 1) {
+                        const anotherPoint = visiblePoints.find(p => p !== pointToShow);
+                        if (anotherPoint) {
+                          const newPosition = { 
+                            lat: anotherPoint.position[1], 
+                            lng: anotherPoint.position[0] 
+                          };
+                          panorama.setPosition(newPosition);
+                        }
+                      }
                     }
                   });
-                  
-                  // Remove marker when street view is hidden
-                  setTimeout(() => {
-                    svMarker.setMap(null);
-                  }, 5000);
                 }
               }
             } else {
@@ -352,6 +423,7 @@ function setupEventListeners() {
           }
         } else {
           // Hide street view
+          console.log('Disabling Street View');
           streetViewContainer.classList.add('hidden');
           if (panorama) {
             panorama.setVisible(false);
@@ -418,9 +490,18 @@ async function loadData() {
     const url = 'https://storage.googleapis.com/ct-pedestrian-demand-data/data/milepoints_data.json';
     updateLoadingStatus('Fetching data from Google Cloud Storage...', 10);
     
+    // Add cache-busting query parameter to avoid browser caching issues
+    const cacheBustUrl = `${url}?v=${new Date().getTime()}`;
+    
     // Try to fetch and log headers to diagnose CORS issues
     try {
-      const headResponse = await fetch(url, { method: 'HEAD' });
+      const headResponse = await fetch(cacheBustUrl, { 
+        method: 'HEAD',
+        cache: 'no-cache',
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
       console.log('GCS Headers:', {
         'content-type': headResponse.headers.get('content-type'),
         'access-control-allow-origin': headResponse.headers.get('access-control-allow-origin'),
@@ -430,8 +511,8 @@ async function loadData() {
       console.warn('Could not fetch headers:', headError);
     }
     
-    console.log('Fetching main data from:', url);
-    const data = await loadGeoJSON(url);
+    console.log('Fetching main data from:', cacheBustUrl);
+    const data = await loadGeoJSON(cacheBustUrl);
     
     // Validate data structure
     if (!data) {
@@ -769,6 +850,38 @@ function updateTotalWeight() {
 
 // Recalculate DemandRank based on current weights
 function recalculateDemandRank() {
+  console.log("Recalculating DemandRank with weights:", currentWeights);
+  
+  if (!pointsData || pointsData.length === 0) {
+    console.warn("No data to recalculate");
+    return;
+  }
+  
+  // Validate that weights sum to approximately 1.0
+  const totalWeight = Object.values(currentWeights).reduce((sum, val) => sum + val, 0);
+  if (Math.abs(totalWeight - 1.0) > 0.01) {
+    console.warn(`Total weight (${totalWeight}) differs from 1.0 by more than 1%. This may lead to unexpected scores.`);
+  }
+  
+  // Log example of a point before recalculation for debugging
+  if (pointsData.length > 0) {
+    const examplePoint = pointsData[0];
+    console.log("Example point before recalculation:", {
+      original: examplePoint.original_DemandRank || examplePoint.DemandRank,
+      current: examplePoint.DemandRank,
+      component_scores: {
+        census: examplePoint.census_score,
+        crash: examplePoint.crash_risk_score,
+        funcClass: examplePoint.functional_class_score,
+        school: examplePoint.school_proximity_score,
+        trail: examplePoint.trail_proximity_score,
+        rail: examplePoint.rail_proximity_score,
+        bus: examplePoint.bus_proximity_score
+      }
+    });
+  }
+  
+  // Recalculate all points
   pointsData.forEach(point => {
     // Store original demand rank if not already stored
     if (!point.hasOwnProperty('original_DemandRank')) {
@@ -788,13 +901,45 @@ function recalculateDemandRank() {
     // Update demand rank
     point.DemandRank = newDemandRank;
   });
+  
+  // Log example of a point after recalculation
+  if (pointsData.length > 0) {
+    const examplePoint = pointsData[0];
+    console.log("Example point after recalculation:", {
+      original: examplePoint.original_DemandRank,
+      new: examplePoint.DemandRank,
+      weighted_components: {
+        census: currentWeights.census * (examplePoint.census_score || 0),
+        crash: currentWeights.crash * (examplePoint.crash_risk_score || 0),
+        funcClass: currentWeights.funcClass * (examplePoint.functional_class_score || 0),
+        school: currentWeights.school * (examplePoint.school_proximity_score || 0),
+        trail: currentWeights.trail * (examplePoint.trail_proximity_score || 0),
+        rail: currentWeights.rail * (examplePoint.rail_proximity_score || 0),
+        bus: currentWeights.bus * (examplePoint.bus_proximity_score || 0)
+      }
+    });
+  }
+  
+  console.log("DemandRank recalculation complete");
 }
 
 // Filter data based on UI controls and update map
 function filterAndUpdateMap() {
+  console.log("Starting data filtering...");
+  
   // Get current filter values
-  const minRank = parseInt(document.getElementById('min-score').value);
-  const maxRank = parseInt(document.getElementById('max-score').value);
+  const minScoreElement = document.getElementById('min-score');
+  const maxScoreElement = document.getElementById('max-score');
+  
+  if (!minScoreElement || !maxScoreElement) {
+    console.error("Score range sliders not found in DOM");
+    return;
+  }
+  
+  const minRank = parseInt(minScoreElement.value);
+  const maxRank = parseInt(maxScoreElement.value);
+  
+  console.log(`Score range filter: ${minRank} to ${maxRank}`);
   
   // Optional filters
   const pedestrianFeasible = document.getElementById('pedestrian-feasible')?.checked;
@@ -802,8 +947,12 @@ function filterAndUpdateMap() {
   const highlightSidewalkGaps = document.getElementById('highlight-sidewalk-gaps')?.checked;
   const highlightCrashSegments = document.getElementById('highlight-crash-segments')?.checked;
   
+  console.log(`Filters: pedestrianFeasible=${pedestrianFeasible}, urbanContext=${urbanContext}, 
+              highlightSidewalkGaps=${highlightSidewalkGaps}, highlightCrashSegments=${highlightCrashSegments}`);
+  
   // Check for active preset
   const activePreset = document.querySelector('input[name="preset"]:checked')?.value;
+  console.log(`Active preset: ${activePreset}`);
   
   // Apply filters to data
   filteredData = pointsData.filter(point => {
@@ -841,6 +990,8 @@ function filterAndUpdateMap() {
     
     return true;
   });
+  
+  console.log(`Filtered data contains ${filteredData.length} points of ${pointsData.length} total`);
   
   // Update the map with filtered data
   updateMapLayers();
@@ -899,6 +1050,13 @@ function updateMapLayers() {
   
   // Get current view bounds to optimize rendering
   const bounds = map.getBounds();
+  
+  // Safeguard if bounds is not available yet
+  if (!bounds) {
+    console.warn('Map bounds not available yet, using all points');
+    return;
+  }
+  
   const inView = point => {
     const lat = point.position[1];
     const lng = point.position[0];
@@ -966,24 +1124,27 @@ function updateMapLayers() {
   // Create layers array
   const layers = [];
   
-  // Main data layer
-  layers.push(
-    new deck.ScatterplotLayer({
-      id: 'demand-points',
-      data: roadData,
-      getPosition: d => d.position,
-      getFillColor: d => getColor(d.DemandRank),
-      getRadius: 15,
-      radiusUnits: 'meters',
-      radiusMinPixels: 2,
-      radiusMaxPixels: 20,
-      pickable: true,
-      opacity: 0.7,
-      stroked: false,
-      onClick: info => handleClick(info),
-      onHover: info => handleHover(info)
-    })
-  );
+  // Only create layers if we have data to display
+  if (roadData.length > 0) {
+    // Main data layer
+    layers.push(
+      new deck.ScatterplotLayer({
+        id: 'demand-points',
+        data: roadData,
+        getPosition: d => d.position,
+        getFillColor: d => getColor(d.DemandRank),
+        getRadius: 15,
+        radiusUnits: 'meters',
+        radiusMinPixels: 2,
+        radiusMaxPixels: 20,
+        pickable: true,
+        opacity: 0.7,
+        stroked: false,
+        onClick: info => handleClick(info),
+        onHover: info => handleHover(info)
+      })
+    );
+  }
   
   // Sidewalk gaps layer (if enabled)
   if (highlightSidewalkGaps && sidewalkGaps.length > 0) {
@@ -1032,7 +1193,13 @@ function updateMapLayers() {
   // Update the deck.gl overlay
   try {
     deckOverlay.setProps({ layers });
-    console.log('Map layers updated successfully');
+    console.log('Map layers updated successfully with', layers.length, 'layers');
+    
+    // Update displayed count
+    const totalFiltered = document.getElementById('totalFiltered');
+    if (totalFiltered) {
+      totalFiltered.textContent = filteredData.length.toLocaleString();
+    }
   } catch (error) {
     console.error('Error updating deck.gl layers:', error);
   }
