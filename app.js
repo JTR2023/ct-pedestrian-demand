@@ -964,7 +964,31 @@ function filterAndUpdateMap() {
   console.log(`Active preset: ${activePreset}`);
   
   // Apply filters to data
-  filteredData = pointsData.filter(point => {
+  filteredData = applyFiltersAndWeights(pointsData, {
+    minRank,
+    maxRank,
+    pedestrianFeasible,
+    urbanContext,
+    activePreset
+  });
+  
+  // Debug log to see what we got after filtering
+  if (filteredData.length === 0 && pointsData.length > 0) {
+    console.warn("All points were filtered out. Showing first few original points for debugging:");
+    console.log(pointsData.slice(0, 3));
+  } else {
+    console.log(`Filtered to ${filteredData.length} points. Sample:`, filteredData.slice(0, 1));
+  }
+  
+  console.log(`Filtered data contains ${filteredData.length} points of ${pointsData.length} total`);
+  
+  // Update the map with filtered data
+  updateMapLayers();
+}
+
+// Apply filters to data
+function applyFiltersAndWeights(data, filters) {
+  return data.filter(point => {
     // Basic validation with debug logging on first few failures
     if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) {
       if (filteredData.length === 0 && pointsData.length > 0) {
@@ -998,19 +1022,17 @@ function filterAndUpdateMap() {
     }
     
     // Apply range filter - using original score scale (10-76)
-    if (rank < minRank || rank > maxRank) {
+    if (rank < filters.minRank || rank > filters.maxRank) {
       return false;
     }
     
-    // Optional filters - be more lenient with type checking
-    if (pedestrianFeasible) {
-      const feasible = Number(point.pedestrian_feasible);
-      if (feasible !== 1) {
-        return false;
-      }
+    // Check pedestrian feasible filter (only if checkbox is checked)
+    // Allows points if property is missing OR if property value is 1
+    if (filters.pedestrianFeasible && Number(point.properties?.pedestrian_feasible || point.pedestrian_feasible || 1) !== 1) {
+      return false;
     }
     
-    if (urbanContext) {
+    if (filters.urbanContext) {
       const urban = Number(point.urban_context);
       if (urban !== 1) {
         return false;
@@ -1018,8 +1040,8 @@ function filterAndUpdateMap() {
     }
     
     // Preset filters
-    if (activePreset && activePreset !== 'none') {
-      const presetCondition = presetFilters[activePreset];
+    if (filters.activePreset && filters.activePreset !== 'none') {
+      const presetCondition = presetFilters[filters.activePreset];
       if (presetCondition) {
         // Parse and apply the SQL-like condition with more type-safety
         if (presetCondition.includes('DemandRank >= 50') && Number(point.DemandRank) < 50) return false;
@@ -1031,19 +1053,6 @@ function filterAndUpdateMap() {
     
     return true;
   });
-  
-  // Debug log to see what we got after filtering
-  if (filteredData.length === 0 && pointsData.length > 0) {
-    console.warn("All points were filtered out. Showing first few original points for debugging:");
-    console.log(pointsData.slice(0, 3));
-  } else {
-    console.log(`Filtered to ${filteredData.length} points. Sample:`, filteredData.slice(0, 1));
-  }
-  
-  console.log(`Filtered data contains ${filteredData.length} points of ${pointsData.length} total`);
-  
-  // Update the map with filtered data
-  updateMapLayers();
 }
 
 // Update deck.gl layers
