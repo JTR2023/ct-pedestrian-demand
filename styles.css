@@ -1,0 +1,172 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  line-height: 1.6;
+  color: #333;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+header {
+  background-color: #333;
+  color: white;
+  padding: 1rem;
+  text-align: center;
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 350px;
+  background-color: #f4f4f4;
+  padding: 1rem;
+  overflow-y: auto;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+}
+
+.control-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.weight-controls, .filters, .score-filter, .export-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #ddd;
+}
+
+.weight-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.weight-control label, .filter label {
+  font-weight: bold;
+}
+
+.weight-control input[type="range"] {
+  width: 100%;
+}
+
+.weight-value {
+  text-align: right;
+  font-size: 0.9rem;
+}
+
+.total-weight {
+  margin-top: 0.5rem;
+  font-weight: bold;
+  text-align: right;
+}
+
+.filter {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.range-slider {
+  margin: 0.5rem 0;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  background-color: #d32f2f; /* Red to match the theme */
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background-color 0.2s;
+}
+
+button:hover {
+  background-color: #b71c1c;
+}
+
+.map-container {
+  flex: 1;
+  position: relative;
+}
+
+#map {
+  height: 100%;
+  width: 100%;
+}
+
+#street-view {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 300px;
+  height: 200px;
+  border: 2px solid #333;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+  z-index: 5;
+}
+
+.hidden {
+  display: none;
+}
+
+footer {
+  background-color: #333;
+  color: white;
+  padding: 0.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+}
+
+/* Legend Styles */
+.legend {
+  padding: 10px;
+  background: white;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+  border-radius: 5px;
+  line-height: 1.5;
+}
+
+.legend i {
+  width: 18px;
+  height: 18px;
+  float: left;
+  margin-right: 8px;
+  opacity: 0.7;
+}
+
+.legend-title {
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+/* Red color scheme for demand rank */
+.color-very-high { background-color: #7f0000; }
+.color-high { background-color: #b71c1c; }
+.color-medium-high { background-color: #d32f2f; }
+.color-medium { background-color: #e53935; }
+.color-medium-low { background-color: #f44336; }
+.color-low { background-color: #ef5350; }
+.color-very-low { background-color: #ffcdd2; }
+
+.color-sidewalk { background-color: #4caf50; }

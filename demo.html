@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Connecticut Pedestrian DemandRank Demo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background-color: #333;
+      color: white;
+      padding: 1rem;
+      text-align: center;
+    }
+    .main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 300px;
+      background-color: #f4f4f4;
+      padding: 1rem;
+      overflow-y: auto;
+    }
+    .map-container {
+      flex: 1;
+      position: relative;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+    .control-group {
+      margin-bottom: 1.5rem;
+    }
+    .weight-control {
+      margin-bottom: 0.5rem;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.25rem;
+      font-weight: bold;
+    }
+    input[type="range"] {
+      width: 100%;
+    }
+    .weight-value {
+      float: right;
+      font-size: 0.9rem;
+    }
+    button {
+      background-color: #d32f2f;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover {
+      background-color: #b71c1c;
+    }
+    .filter {
+      margin-bottom: 0.5rem;
+    }
+    footer {
+      background-color: #333;
+      color: white;
+      padding: 0.5rem;
+      text-align: center;
+    }
+  </style>
+  <script src="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+</head>
+<body>
+  <header>
+    <h1>Connecticut Pedestrian DemandRank</h1>
+  </header>
+  
+  <div class="main-content">
+    <div class="sidebar">
+      <div class="control-group">
+        <h2>Model Weights</h2>
+        <div class="weight-control">
+          <label>Census Score <span class="weight-value">20%</span></label>
+          <input type="range" id="census-weight" min="0" max="1" step="0.05" value="0.20">
+        </div>
+        <div class="weight-control">
+          <label>Crash Risk Score <span class="weight-value">20%</span></label>
+          <input type="range" id="crash-weight" min="0" max="1" step="0.05" value="0.20">
+        </div>
+        <div class="weight-control">
+          <label>Functional Class Score <span class="weight-value">20%</span></label>
+          <input type="range" id="func-class-weight" min="0" max="1" step="0.05" value="0.20">
+        </div>
+        <div class="weight-control">
+          <label>School Proximity <span class="weight-value">10%</span></label>
+          <input type="range" id="school-weight" min="0" max="1" step="0.05" value="0.10">
+        </div>
+        <div class="weight-control">
+          <label>Trail Proximity <span class="weight-value">10%</span></label>
+          <input type="range" id="trail-weight" min="0" max="1" step="0.05" value="0.10">
+        </div>
+        <div class="weight-control">
+          <label>Rail Stop Proximity <span class="weight-value">10%</span></label>
+          <input type="range" id="rail-weight" min="0" max="1" step="0.05" value="0.10">
+        </div>
+        <div class="weight-control">
+          <label>Bus Stop Proximity <span class="weight-value">10%</span></label>
+          <input type="range" id="bus-weight" min="0" max="1" step="0.05" value="0.10">
+        </div>
+        <div style="text-align: right; margin-top: 0.5rem;">
+          <strong>Total: <span id="total-weight">100%</span></strong>
+        </div>
+        <button id="recalculate">Recalculate</button>
+      </div>
+      
+      <div class="control-group">
+        <h2>Filters</h2>
+        <div class="filter">
+          <input type="checkbox" id="pedestrian-feasible" checked>
+          <label for="pedestrian-feasible">Pedestrian Feasible Only</label>
+        </div>
+        <div class="filter">
+          <input type="checkbox" id="urban-context">
+          <label for="urban-context">Urban Areas Only</label>
+        </div>
+        <div class="filter">
+          <input type="checkbox" id="existing-sidewalks">
+          <label for="existing-sidewalks">Show Existing Sidewalks</label>
+        </div>
+      </div>
+      
+      <div class="control-group">
+        <h2>Export</h2>
+        <button id="export-csv">Export CSV</button>
+        <button id="export-geojson" style="margin-left: 0.5rem;">Export GeoJSON</button>
+      </div>
+    </div>
+    
+    <div class="map-container">
+      <div id="map"></div>
+    </div>
+  </div>
+  
+  <footer>
+    <p>Based on Connecticut DOT Pedestrian DemandRank methodology</p>
+  </footer>
+  
+  <script>
+    // Initialize the map
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://demotiles.maplibre.org/style.json',
+      center: [-72.7, 41.6], // Connecticut
+      zoom: 9
+    });
+    
+    // Add navigation controls
+    map.addControl(new maplibregl.NavigationControl());
+    
+    // Sample Data - would be replaced with your actual GeoPackage data
+    const sampleData = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: {
+            demand_rank: 65,
+            census_score: 10,
+            crash_risk_score: 10,
+            functional_class_score: 7,
+            school_proximity_score: 10,
+            trail_proximity_score: 7,
+            rail_proximity_score: 7,
+            bus_proximity_score: 10,
+            pedestrian_feasible: 1,
+            urban_context: 1,
+            sidewalks: 0
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [-72.8, 41.55],
+              [-72.79, 41.56]
+            ]
+          }
+        },
+        {
+          type: 'Feature',
+          properties: {
+            demand_rank: 45,
+            census_score: 5,
+            crash_risk_score: 10,
+            functional_class_score: 4,
+            school_proximity_score: 7,
+            trail_proximity_score: 4,
+            rail_proximity_score: 4,
+            bus_proximity_score: 7,
+            pedestrian_feasible: 1,
+            urban_context: 1,
+            sidewalks: 1
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [-72.78, 41.57],
+              [-72.77, 41.58]
+            ]
+          }
+        },
+        {
+          type: 'Feature',
+          properties: {
+            demand_rank: 25,
+            census_score: 1,
+            crash_risk_score: 0,
+            functional_class_score: 4,
+            school_proximity_score: 4,
+            trail_proximity_score: 4,
+            rail_proximity_score: 1,
+            bus_proximity_score: 7,
+            pedestrian_feasible: 1,
+            urban_context: 0,
+            sidewalks: 0
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [-72.76, 41.59],
+              [-72.75, 41.60]
+            ]
+          }
+        }
+      ]
+    };
+    
+    // Add more sample roads to make the demo more interesting
+    for (let i = 0; i < 20; i++) {
+      const baseLat = 41.55 + Math.random() * 0.15;
+      const baseLng = -72.8 + Math.random() * 0.15;
+      const score = Math.floor(Math.random() * 70) + 10;
+      
+      sampleData.features.push({
+        type: 'Feature',
+        properties: {
+          demand_rank: score,
+          census_score: score > 50 ? 10 : score > 30 ? 5 : 1,
+          crash_risk_score: score > 40 ? 10 : 0,
+          functional_class_score: score > 60 ? 10 : score > 40 ? 7 : 4,
+          school_proximity_score: Math.floor(Math.random() * 10) + 1,
+          trail_proximity_score: Math.floor(Math.random() * 10) + 1,
+          rail_proximity_score: Math.floor(Math.random() * 10) + 1,
+          bus_proximity_score: Math.floor(Math.random() * 10) + 1,
+          pedestrian_feasible: Math.random() > 0.2 ? 1 : 0,
+          urban_context: Math.random() > 0.5 ? 1 : 0,
+          sidewalks: Math.random() > 0.7 ? 1 : 0
+        },
+        geometry: {
+          type: 'LineString',
+          coordinates: [
+            [baseLng, baseLat],
+            [baseLng + 0.02, baseLat + 0.02]
+          ]
+        }
+      });
+    }
+    
+    // Load data
+    map.on('load', () => {
+      // Add source
+      map.addSource('demandrank', {
+        type: 'geojson',
+        data: sampleData
+      });
+      
+      // Add a layer for roads
+      map.addLayer({
+        id: 'roads',
+        type: 'line',
+        source: 'demandrank',
+        paint: {
+          'line-color': [
+            'interpolate',
+            ['linear'],
+            ['get', 'demand_rank'],
+            10, '#ffcdd2',
+            25, '#ef5350',
+            40, '#e53935',
+            55, '#d32f2f',
+            70, '#b71c1c'
+          ],
+          'line-width': 4
+        }
+      });
+      
+      // Add a layer for sidewalks
+      map.addLayer({
+        id: 'sidewalks',
+        type: 'line',
+        source: 'demandrank',
+        filter: ['==', ['get', 'sidewalks'], 1],
+        paint: {
+          'line-color': '#4caf50',
+          'line-width': 4
+        },
+        layout: {
+          'visibility': 'none'
+        }
+      });
+      
+      // Set up event handlers for UI controls
+      document.getElementById('existing-sidewalks').addEventListener('change', function(e) {
+        const visibility = e.target.checked ? 'visible' : 'none';
+        map.setLayoutProperty('sidewalks', 'visibility', visibility);
+      });
+      
+      document.getElementById('pedestrian-feasible').addEventListener('change', filterData);
+      document.getElementById('urban-context').addEventListener('change', filterData);
+      
+      function filterData() {
+        const pedestrianFeasible = document.getElementById('pedestrian-feasible').checked;
+        const urbanContext = document.getElementById('urban-context').checked;
+        
+        let filter = ['all'];
+        
+        if (pedestrianFeasible) {
+          filter.push(['==', ['get', 'pedestrian_feasible'], 1]);
+        }
+        
+        if (urbanContext) {
+          filter.push(['==', ['get', 'urban_context'], 1]);
+        }
+        
+        map.setFilter('roads', filter);
+        map.setFilter('sidewalks', ['all', ['==', ['get', 'sidewalks'], 1], ...filter]);
+      }
+      
+      // Set up weight sliders
+      const weightControls = {
+        census: document.getElementById('census-weight'),
+        crash: document.getElementById('crash-weight'),
+        funcClass: document.getElementById('func-class-weight'),
+        school: document.getElementById('school-weight'),
+        trail: document.getElementById('trail-weight'),
+        rail: document.getElementById('rail-weight'),
+        bus: document.getElementById('bus-weight')
+      };
+      
+      // Update weight display when sliders change
+      Object.entries(weightControls).forEach(([key, control]) => {
+        control.addEventListener('input', () => {
+          const value = parseFloat(control.value);
+          control.previousElementSibling.querySelector('.weight-value').textContent = `${Math.round(value * 100)}%`;
+          updateTotalWeight();
+        });
+      });
+      
+      function updateTotalWeight() {
+        const total = Object.values(weightControls)
+          .reduce((sum, control) => sum + parseFloat(control.value), 0);
+        
+        const totalDisplay = document.getElementById('total-weight');
+        totalDisplay.textContent = `${Math.round(total * 100)}%`;
+        
+        if (Math.abs(total - 1) > 0.01) {
+          totalDisplay.style.color = 'red';
+        } else {
+          totalDisplay.style.color = 'inherit';
+        }
+      }
+      
+      // Recalculate demand rank
+      document.getElementById('recalculate').addEventListener('click', () => {
+        // In a real implementation, this would recalculate all scores
+        alert('In the full application, this would recalculate all DemandRank scores based on your weights.');
+      });
+      
+      // Export buttons
+      document.getElementById('export-csv').addEventListener('click', () => {
+        alert('In the full application, this would export the filtered data as CSV.');
+      });
+      
+      document.getElementById('export-geojson').addEventListener('click', () => {
+        alert('In the full application, this would export the filtered data as GeoJSON.');
+      });
+    });
+  </script>
+</body>
+</html>

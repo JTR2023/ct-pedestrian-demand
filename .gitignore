@@ -1,0 +1,25 @@
+# Node.js dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Build files
+dist/
+build/
+
+# Temporary files
+.DS_Store
+.cache/
+*.log
+npm-debug.log*
+
+# Large data files (store these in Google Cloud Storage instead)
+data/*.gpkg
+data/geojson/
+
+# API keys (these should be added securely in production)
+# config.js is committed with a placeholder API key
+
+# Local development files
+.vscode/

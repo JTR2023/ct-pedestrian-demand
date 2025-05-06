@@ -1,0 +1,17 @@
+{
+  "name": "ct-pedestrian-demand-map",
+  "version": "1.0.0",
+  "description": "Interactive web map for Connecticut Pedestrian DemandRank model",
+  "main": "index.js",
+  "scripts": {
+    "start": "http-server -p 8080",
+    "deploy": "gsutil -m cp -r * gs://your-gcs-bucket-name/",
+    "convert": "ogr2ogr -f GeoJSON data/demandrank.geojson data/source.gpkg",
+    "preview": "http-server -p 8080"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.16.0",
+    "deck.gl": "^8.9.0",
+    "http-server": "^14.1.1"
+  }
+}

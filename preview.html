@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GeoPackage Preview</title>
+  <style>
+    body { margin: 0; padding: 0; }
+    #map { width: 100%; height: 100vh; }
+  </style>
+  <script src="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.js"></script>
+  <link href="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+</head>
+<body>
+  <div id="map"></div>
+  <script>
+    // Initialize the map
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://demotiles.maplibre.org/style.json',
+      center: [-72.7, 41.6], // Connecticut
+      zoom: 9
+    });
+    
+    // Add navigation controls
+    map.addControl(new maplibregl.NavigationControl());
+    
+    // Load GeoJSON data
+    map.on('load', () => {
+      map.addSource('demandrank', {
+        type: 'geojson',
+        data: 'data/geojson/preview.geojson'
+      });
+      
+      // Add a layer for roads
+      map.addLayer({
+        id: 'roads',
+        type: 'line',
+        source: 'demandrank',
+        paint: {
+          'line-color': [
+            'interpolate',
+            ['linear'],
+            ['get', 'demand_rank'],
+            10, '#ffcdd2',
+            25, '#ef5350',
+            40, '#e53935',
+            55, '#d32f2f',
+            70, '#b71c1c'
+          ],
+          'line-width': 4
+        }
+      });
+      
+      // Add a layer for sidewalks
+      map.addLayer({
+        id: 'sidewalks',
+        type: 'line',
+        source: 'demandrank',
+        filter: ['==', ['get', 'sidewalks'], 1],
+        paint: {
+          'line-color': '#4caf50',
+          'line-width': 4
+        }
+      });
+    });
+  </script>
+</body>
+</html>
