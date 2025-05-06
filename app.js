@@ -973,8 +973,17 @@ function filterAndUpdateMap() {
       return false;
     }
     
-    // Demand rank filter - be more lenient with types
-    let rank = point.DemandRank;
+    // Demand rank filter - USE ORIGINAL SCORE for filtering
+    // This fixes the issue where recalculated scores (0-10 scale) don't match the filter range (10-76)
+    let rank;
+    
+    // Use original_DemandRank if available (this exists after recalculation), otherwise use DemandRank
+    if (point.hasOwnProperty('original_DemandRank')) {
+      rank = point.original_DemandRank;
+    } else {
+      rank = point.DemandRank;
+    }
+    
     // Try to convert to number if it's a string
     if (typeof rank === 'string') {
       rank = parseFloat(rank);
@@ -988,7 +997,7 @@ function filterAndUpdateMap() {
       return false;
     }
     
-    // Apply range filter - make sure to compare numbers to numbers
+    // Apply range filter - using original score scale (10-76)
     if (rank < minRank || rank > maxRank) {
       return false;
     }
@@ -1202,7 +1211,11 @@ function updateMapLayers() {
         id: 'demand-points',
         data: roadData,
         getPosition: d => d.position,
-        getFillColor: d => getColor(d.DemandRank),
+        getFillColor: d => {
+          // Use original score for coloring if available, otherwise use recalculated
+          const scoreForColor = d.hasOwnProperty('original_DemandRank') ? d.original_DemandRank : d.DemandRank;
+          return getColor(scoreForColor);
+        },
         getRadius: 15,
         radiusUnits: 'meters',
         radiusMinPixels: 2,
@@ -1277,6 +1290,7 @@ function updateMapLayers() {
 
 // Get color for a score
 function getColor(score) {
+  // We're now passing the original score directly from the layer creation
   if (score >= 70) return [127, 0, 0, 220]; // Very high
   if (score >= 60) return [183, 28, 28, 220]; // High
   if (score >= 50) return [198, 40, 40, 220]; // Medium-high
@@ -1301,7 +1315,14 @@ function handleClick(info) {
   
   // Create info window content - with safe value handling
   const getDemandRank = () => {
-    try { return point.DemandRank.toFixed(1); } 
+    try {
+      // If we have both scores, show both
+      if (point.hasOwnProperty('original_DemandRank')) {
+        return `${point.DemandRank.toFixed(1)} (Original: ${point.original_DemandRank})`;
+      }
+      // Otherwise just show the current DemandRank
+      return point.DemandRank.toFixed(1);
+    } 
     catch (e) { return point.DemandRank || 'N/A'; }
   };
   
