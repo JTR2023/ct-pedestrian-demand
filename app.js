@@ -722,17 +722,64 @@ function normalizeData() {
         
         // For Point geometry, coordinates is just [lng, lat]
         // For LineString, it's an array of points, so we take the first one
-        let position;
-        if (coordinates.length > 0) {
-          if (geometry.type === "Point") {
-            position = coordinates; // [lng, lat]
-          } else if (geometry.type === "LineString" && coordinates[0] && coordinates[0].length >= 2) {
+        let position = null;
+        
+        // Better handling of geometry types with explicit type checking
+        if (geometry.type === "Point" && Array.isArray(coordinates) && coordinates.length >= 2) {
+          // For Point, coordinates should be a simple [lng, lat] array
+          position = coordinates;
+          console.log("Processing Point geometry:", position);
+        } 
+        else if (geometry.type === "LineString" && Array.isArray(coordinates) && coordinates.length > 0) {
+          // For LineString, coordinates is an array of points
+          if (Array.isArray(coordinates[0]) && coordinates[0].length >= 2) {
             position = coordinates[0]; // First point in the line
-          } else if (Array.isArray(coordinates[0])) {
-            position = coordinates[0]; // Assume first item is a point
-          } else if (coordinates.length >= 2) {
-            position = coordinates; // Assume coordinates is a single point
+            console.log("Processing LineString geometry, first point:", position);
+          } else {
+            console.warn("LineString with invalid first point structure:", coordinates[0]);
           }
+        }
+        // Handle MultiPoint, MultiLineString, etc.
+        else if (geometry.type && geometry.type.startsWith("Multi") && Array.isArray(coordinates) && coordinates.length > 0) {
+          if (Array.isArray(coordinates[0]) && coordinates[0].length >= 2) {
+            position = coordinates[0]; // First coordinate
+            console.log("Processing Multi* geometry, first coordinate:", position);
+          } else if (Array.isArray(coordinates[0]) && Array.isArray(coordinates[0][0]) && coordinates[0][0].length >= 2) {
+            position = coordinates[0][0]; // First point of first feature
+            console.log("Processing nested Multi* geometry, first point:", position);
+          }
+        }
+        // Fallback handling for unknown geometry types
+        else if (Array.isArray(coordinates)) {
+          if (coordinates.length >= 2 && typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
+            // Coordinates is directly a [lng, lat] pair
+            position = coordinates;
+            console.log("Processing direct coordinate pair:", position);
+          } else if (Array.isArray(coordinates[0]) && coordinates[0].length >= 2) {
+            // First element is an array that might be a coordinate pair
+            position = coordinates[0];
+            console.log("Processing array of coordinates, taking first:", position);
+          }
+        }
+        
+        // Final validation and fix for position
+        if (!position) {
+          console.warn("Failed to extract position from geometry:", {
+            type: geometry.type,
+            coords: coordinates ? coordinates.slice(0, 2) : 'none'
+          });
+          position = [0, 0]; // Default position as last resort
+        } else if (!Array.isArray(position)) {
+          console.warn("Position is not an array, converting...");
+          position = [0, 0];
+        } else if (position.length < 2) {
+          console.warn("Position array too short, fixing...");
+          position = position.concat([0, 0]).slice(0, 2);
+        }
+        
+        // Convert coordinates to numbers
+        if (position && position.length >= 2) {
+          position = [Number(position[0]), Number(position[1])];
         }
         
         // Fix common field naming issues
@@ -771,15 +818,85 @@ function normalizeData() {
         if (!point) return null;
         
         const properties = point.properties || point;
+        // Start with position from properties if it exists
         let position = properties.position;
+        let positionSource = position ? "from_properties" : "none";
         
-        if (!position) {
-          if (point.geometry && point.geometry.coordinates) {
-            position = point.geometry.coordinates;
-          } else if (properties.longitude != null && properties.latitude != null) {
+        // Try various ways to get position
+        if (!position && point.geometry && point.geometry.coordinates) {
+          const coordinates = point.geometry.coordinates;
+          
+          // Apply same comprehensive geometry type handling as above
+          if (point.geometry.type === "Point" && Array.isArray(coordinates) && coordinates.length >= 2) {
+            position = coordinates;
+            positionSource = "point_geometry";
+          } 
+          else if (point.geometry.type === "LineString" && Array.isArray(coordinates) && coordinates.length > 0) {
+            if (Array.isArray(coordinates[0]) && coordinates[0].length >= 2) {
+              position = coordinates[0]; // First point in the line
+              positionSource = "linestring_first_point";
+            }
+          }
+          else if (point.geometry.type && point.geometry.type.startsWith("Multi") && Array.isArray(coordinates) && coordinates.length > 0) {
+            if (Array.isArray(coordinates[0]) && coordinates[0].length >= 2) {
+              position = coordinates[0];
+              positionSource = "multi_geometry_first_coordinate";
+            } else if (Array.isArray(coordinates[0]) && Array.isArray(coordinates[0][0]) && coordinates[0][0].length >= 2) {
+              position = coordinates[0][0];
+              positionSource = "multi_geometry_nested";
+            }
+          }
+          // Fallback for array coordinates when geometry type is unknown
+          else if (Array.isArray(coordinates)) {
+            if (coordinates.length >= 2 && typeof coordinates[0] === 'number' && typeof coordinates[1] === 'number') {
+              position = coordinates;
+              positionSource = "direct_coordinates";
+            } else if (Array.isArray(coordinates[0]) && coordinates[0].length >= 2) {
+              position = coordinates[0];
+              positionSource = "first_coordinate_array";
+            }
+          }
+        } 
+        // Try lat/long properties
+        else if (!position) {
+          if (properties.longitude != null && properties.latitude != null) {
             position = [properties.longitude, properties.latitude];
+            positionSource = "long_lat_properties";
           } else if (properties.lng != null && properties.lat != null) {
             position = [properties.lng, properties.lat];
+            positionSource = "lng_lat_properties";
+          } else if (properties.x != null && properties.y != null) {
+            position = [properties.x, properties.y];
+            positionSource = "x_y_properties";
+          }
+        }
+        
+        // Final validation and fix for position
+        if (!position) {
+          console.warn("Failed to extract position from non-feature data:", {
+            hasGeometry: !!point.geometry,
+            geometryType: point.geometry ? point.geometry.type : 'none',
+            propertyKeys: Object.keys(properties).slice(0, 10)
+          });
+          position = [0, 0]; // Default position as last resort
+          positionSource = "default_zeros";
+        } else if (!Array.isArray(position)) {
+          console.warn("Position is not an array in non-feature data, converting...");
+          position = [0, 0];
+          positionSource = "converted_non_array";
+        } else if (position.length < 2) {
+          console.warn("Position array too short in non-feature data, fixing...");
+          position = position.concat([0, 0]).slice(0, 2);
+          positionSource = "extended_short_array";
+        }
+        
+        // Convert coordinates to numbers
+        if (position && position.length >= 2) {
+          position = [Number(position[0]), Number(position[1])];
+          
+          // Log if this is one of the first few points
+          if (pointsData.length < 5) {
+            console.log(`Non-feature position extracted (${positionSource}):`, position);
           }
         }
         
@@ -811,10 +928,48 @@ function normalizeData() {
   
   // Filter out any entries without valid positions
   const initialCount = pointsData.length;
-  pointsData = pointsData.filter(point => 
-    point.position && Array.isArray(point.position) && point.position.length >= 2
-  );
+  const invalidPositions = [];
+  
+  // Collect some invalid points for debugging
+  for (let i = 0; i < Math.min(initialCount, 1000); i++) {
+    const point = pointsData[i];
+    if (!point.position || !Array.isArray(point.position) || point.position.length < 2) {
+      invalidPositions.push({
+        index: i,
+        position: point.position,
+        hasGeometry: !!point.geometry,
+        geometryType: point.geometry ? point.geometry.type : 'none'
+      });
+      
+      // Stop collecting after 5 examples
+      if (invalidPositions.length >= 5) break;
+    }
+  }
+  
+  // Log invalid position examples if any found
+  if (invalidPositions.length > 0) {
+    console.warn("Examples of invalid positions before filtering:", invalidPositions);
+  }
+  
+  pointsData = pointsData.filter(point => {
+    if (!point.position || !Array.isArray(point.position) || point.position.length < 2) {
+      return false;
+    }
+    
+    // Also validate the actual coordinate values
+    const lng = Number(point.position[0]);
+    const lat = Number(point.position[1]);
+    return !isNaN(lng) && !isNaN(lat) && 
+           lat >= -90 && lat <= 90 && 
+           lng >= -180 && lng <= 180;
+  });
+  
   console.log(`Normalized ${pointsData.length} data points (filtered out ${initialCount - pointsData.length} invalid points)`);
+  
+  // Add additional debug info for first few points
+  if (pointsData.length > 0) {
+    console.log("First 3 normalized points position format:", pointsData.slice(0, 3).map(p => p.position));
+  }
   
   // Log a sample point for debugging
   if (pointsData.length > 0) {
@@ -1110,19 +1265,46 @@ function updateMapLayers() {
   
   // Validate data points before rendering
   const validData = filteredData.filter(point => {
-    if (!point.position || !Array.isArray(point.position) || point.position.length < 2) {
+    // Skip null or undefined points
+    if (!point) return false;
+    
+    // Check if position exists and is an array
+    if (!point.position || !Array.isArray(point.position)) {
+      console.log("Invalid position found:", point.position);
       return false;
     }
-    // Validate latitude/longitude values
-    const lng = point.position[0];
-    const lat = point.position[1];
-    return !isNaN(lat) && !isNaN(lng) && 
-           lat >= -90 && lat <= 90 && 
-           lng >= -180 && lng <= 180;
+    
+    // Ensure position has at least 2 elements
+    if (point.position.length < 2) {
+      console.log("Position too short:", point.position);
+      return false;
+    }
+    
+    // Extract and validate coordinates
+    const lng = Number(point.position[0]);
+    const lat = Number(point.position[1]);
+    
+    // Check for valid numeric values within range
+    if (isNaN(lat) || isNaN(lng) || 
+        lat < -90 || lat > 90 || 
+        lng < -180 || lng > 180) {
+      console.log("Invalid coordinates:", lng, lat);
+      return false;
+    }
+    
+    return true;
   });
   
   if (validData.length < filteredData.length) {
     console.warn(`Filtered out ${filteredData.length - validData.length} points with invalid positions`);
+    
+    // If we lost too many points (>90%), log some failing examples for debugging
+    if (validData.length < filteredData.length * 0.1 && filteredData.length > 0) {
+      console.error("Most points failed position validation. Examples of failing points:");
+      for (let i = 0; i < Math.min(5, filteredData.length); i++) {
+        console.log("Example invalid point:", filteredData[i]);
+      }
+    }
   }
   
   if (validData.length === 0) {
