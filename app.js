@@ -213,7 +213,7 @@ function setupEventListeners() {
   const weightInputs = {
     census: document.getElementById('census-weight'),
     crash: document.getElementById('crash-weight'),
-    funcClass: document.getElementById('func-class-weight'),
+    funcClass: document.getElementById('func-class-weight'), // This must match the ID in HTML (func-class-weight)
     school: document.getElementById('school-weight'),
     trail: document.getElementById('trail-weight'),
     rail: document.getElementById('rail-weight'),
@@ -491,13 +491,18 @@ async function loadData() {
     updateLoadingStatus('Fetching data from Google Cloud Storage...', 10);
     
     // Add cache-busting query parameter to avoid browser caching issues
+    // Use a mode:cors option to explicitly request CORS behavior
     const cacheBustUrl = `${url}?v=${new Date().getTime()}`;
     
-    // Try to fetch and log headers to diagnose CORS issues
+    // Enable console diagnostics for CORS
+    console.log('Attempting to load data with CORS');
+    
     try {
       const headResponse = await fetch(cacheBustUrl, { 
         method: 'HEAD',
+        mode: 'cors',
         cache: 'no-cache',
+        credentials: 'omit', // Don't send or receive cookies
         headers: {
           'Accept': 'application/json'
         }
@@ -509,6 +514,7 @@ async function loadData() {
       });
     } catch (headError) {
       console.warn('Could not fetch headers:', headError);
+      console.error('CORS issue detected with HEAD request. This may indicate the bucket CORS settings need to be updated.');
     }
     
     console.log('Fetching main data from:', cacheBustUrl);
@@ -610,9 +616,12 @@ async function loadGeoJSON(url) {
   updateLoadingStatus('Fetching GeoJSON data...', 10);
   
   try {
-    // Fetch the data with appropriate cache settings
+    // Fetch the data with appropriate CORS and cache settings
+    console.log('Making CORS fetch request to GCS');
     const response = await fetch(url, {
       method: 'GET',
+      mode: 'cors',
+      credentials: 'omit', // Don't send or receive cookies
       headers: {
         'Accept': 'application/json'
       },
@@ -956,40 +965,71 @@ function filterAndUpdateMap() {
   
   // Apply filters to data
   filteredData = pointsData.filter(point => {
-    // Basic validation
+    // Basic validation with debug logging on first few failures
     if (!point || !point.position || !Array.isArray(point.position) || point.position.length !== 2) {
+      if (filteredData.length === 0 && pointsData.length > 0) {
+        console.warn("Failed position validation for point:", point);
+      }
       return false;
     }
     
-    // Demand rank filter
-    const rank = point.DemandRank;
-    if (typeof rank !== 'number' || isNaN(rank) || rank < minRank || rank > maxRank) {
+    // Demand rank filter - be more lenient with types
+    let rank = point.DemandRank;
+    // Try to convert to number if it's a string
+    if (typeof rank === 'string') {
+      rank = parseFloat(rank);
+    }
+    
+    // More permissive numeric check
+    if (isNaN(rank)) {
+      if (filteredData.length === 0) {
+        console.warn("Invalid DemandRank:", rank, "for point:", point);
+      }
       return false;
     }
     
-    // Optional filters
-    if (pedestrianFeasible && !point.pedestrian_feasible) {
+    // Apply range filter - make sure to compare numbers to numbers
+    if (rank < minRank || rank > maxRank) {
       return false;
     }
     
-    if (urbanContext && !point.urban_context) {
-      return false;
+    // Optional filters - be more lenient with type checking
+    if (pedestrianFeasible) {
+      const feasible = Number(point.pedestrian_feasible);
+      if (feasible !== 1) {
+        return false;
+      }
+    }
+    
+    if (urbanContext) {
+      const urban = Number(point.urban_context);
+      if (urban !== 1) {
+        return false;
+      }
     }
     
     // Preset filters
     if (activePreset && activePreset !== 'none') {
       const presetCondition = presetFilters[activePreset];
       if (presetCondition) {
-        // Parse and apply the SQL-like condition
-        if (presetCondition.includes('DemandRank >= 50') && point.DemandRank < 50) return false;
-        if (presetCondition.includes('crash_risk_score = 10') && point.crash_risk_score !== 10) return false;
-        if (presetCondition.includes('Sidewalks = 0') && point.Sidewalks !== 0) return false;
-        if (presetCondition.includes('pedestrian_feasible = 1') && point.pedestrian_feasible !== 1) return false;
+        // Parse and apply the SQL-like condition with more type-safety
+        if (presetCondition.includes('DemandRank >= 50') && Number(point.DemandRank) < 50) return false;
+        if (presetCondition.includes('crash_risk_score = 10') && Number(point.crash_risk_score) !== 10) return false;
+        if (presetCondition.includes('Sidewalks = 0') && Number(point.Sidewalks) !== 0) return false;
+        if (presetCondition.includes('pedestrian_feasible = 1') && Number(point.pedestrian_feasible) !== 1) return false;
       }
     }
     
     return true;
   });
+  
+  // Debug log to see what we got after filtering
+  if (filteredData.length === 0 && pointsData.length > 0) {
+    console.warn("All points were filtered out. Showing first few original points for debugging:");
+    console.log(pointsData.slice(0, 3));
+  } else {
+    console.log(`Filtered to ${filteredData.length} points. Sample:`, filteredData.slice(0, 1));
+  }
   
   console.log(`Filtered data contains ${filteredData.length} points of ${pointsData.length} total`);
   
@@ -999,6 +1039,8 @@ function filterAndUpdateMap() {
 
 // Update deck.gl layers
 function updateMapLayers() {
+  console.log('updateMapLayers called...');
+  
   if (!deckOverlay) {
     console.error('deck.gl overlay not initialized');
     return;
@@ -1010,8 +1052,36 @@ function updateMapLayers() {
     return;
   }
   
+  // Check if we have filteredData with valid entries
   if (filteredData.length === 0) {
     console.log('Filtered data is empty, nothing to display');
+    
+    // Try using unfiltered data as a fallback if it exists (for debugging)
+    if (pointsData && pointsData.length > 0) {
+      console.log(`Attempting to show ${Math.min(1000, pointsData.length)} unfiltered points as fallback for debugging`);
+      const samplePoints = pointsData.slice(0, 1000); // Just show some sample points to verify rendering works
+      
+      // Create a basic debug layer
+      const debugLayer = new deck.ScatterplotLayer({
+        id: 'debug-points',
+        data: samplePoints,
+        getPosition: d => d.position,
+        getFillColor: [255, 0, 0, 200], // Red for debug
+        getRadius: 50, // Larger for visibility
+        radiusUnits: 'meters',
+        radiusMinPixels: 4,
+        radiusMaxPixels: 30,
+        pickable: true,
+        opacity: 0.9,
+        stroked: true,
+        onClick: info => console.log('Debug point clicked:', info.object)
+      });
+      
+      // Set the debug layer
+      deckOverlay.setProps({ layers: [debugLayer] });
+      return;
+    }
+    
     // Clear the map layers but keep the overlay
     deckOverlay.setProps({ layers: [] });
     return;
