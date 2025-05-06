@@ -186,17 +186,21 @@ body {
 
 /* Advanced Panel */
 .advanced-panel {
-  max-height: 0;
+  max-height: 2000px; /* Default state is expanded */
   overflow: hidden;
-  transition: max-height 0.3s ease-out;
+  transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+  opacity: 1;
 }
 
 .advanced-panel.expanded {
   max-height: 2000px;
+  opacity: 1;
 }
 
 .advanced-panel.hidden {
   display: none;
+  max-height: 0;
+  opacity: 0;
 }
 
 /* Weight Controls */
@@ -210,12 +214,14 @@ body {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  margin-bottom: 10px;
 }
 
 .weight-control label {
   display: flex;
   justify-content: space-between;
   font-size: 0.9rem;
+  width: 100%;
 }
 
 .weight-value {

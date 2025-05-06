@@ -101,6 +101,8 @@ function setupEventListeners() {
   
   toggleBtn.addEventListener('click', () => {
     advancedPanel.classList.toggle('hidden');
+    // Also toggle expanded class for animation
+    advancedPanel.classList.toggle('expanded', !advancedPanel.classList.contains('hidden'));
     toggleBtn.textContent = advancedPanel.classList.contains('hidden') 
       ? 'Advanced Options ▼' 
       : 'Advanced Options ▲';
@@ -159,14 +161,31 @@ function setupEventListeners() {
   Object.entries(weightInputs).forEach(([key, input]) => {
     if (!input) return;
     
-    const valueDisplay = input.parentElement.querySelector('.weight-value');
+    // Find the weight value display more specifically in the label element
+    const label = input.parentElement.querySelector('label');
+    const valueDisplay = label ? label.querySelector('.weight-value') : input.parentElement.querySelector('.weight-value');
     
     input.addEventListener('input', () => {
       const value = parseFloat(input.value);
-      valueDisplay.textContent = `${Math.round(value * 100)}%`;
+      if (valueDisplay) {
+        valueDisplay.textContent = `${Math.round(value * 100)}%`;
+      }
       currentWeights[key] = value;
       updateTotalWeight();
     });
+  });
+  
+  // Initialize weight displays with current values
+  Object.entries(currentWeights).forEach(([key, value]) => {
+    const input = document.getElementById(`${key}-weight`);
+    if (input) {
+      input.value = value;
+      const label = input.parentElement.querySelector('label');
+      const valueDisplay = label ? label.querySelector('.weight-value') : input.parentElement.querySelector('.weight-value');
+      if (valueDisplay) {
+        valueDisplay.textContent = `${Math.round(value * 100)}%`;
+      }
+    }
   });
   
   // Recalculate button
@@ -198,9 +217,15 @@ function setupEventListeners() {
         }
         
         if (id === 'show-street-view') {
-          if (!checkbox.checked) {
-            document.getElementById('street-view').classList.add('hidden');
-            panorama.setVisible(false);
+          const streetViewContainer = document.getElementById('street-view');
+          if (streetViewContainer) {
+            if (checkbox.checked) {
+              streetViewContainer.classList.remove('hidden');
+              panorama.setVisible(true);
+            } else {
+              streetViewContainer.classList.add('hidden');
+              panorama.setVisible(false);
+            }
           }
         }
       });
@@ -362,10 +387,24 @@ async function loadGeoJSON(url) {
     const text = new TextDecoder("utf-8").decode(chunksAll);
     const parsedData = JSON.parse(text);
     
+    // Log the data structure for debugging
+    console.log("GeoJSON data structure:", {
+      type: parsedData.type,
+      featureCount: parsedData.features ? parsedData.features.length : 'No features array',
+      sampleFeature: parsedData.features && parsedData.features.length > 0 ? 
+                      { type: parsedData.features[0].type, properties: Object.keys(parsedData.features[0].properties || {}) } : 
+                      'No features'
+    });
+    
     updateLoadingStatus('GeoJSON loaded successfully, preparing data...', 90);
     
-    return parsedData;
-    
+    // Make sure we're returning a properly formatted dataset
+    if (parsedData.type === "FeatureCollection" && Array.isArray(parsedData.features)) {
+      return parsedData;
+    } else {
+      console.warn("Data is not in expected FeatureCollection format, attempting to process anyway");
+      return parsedData;
+    }
   } catch (error) {
     console.error('GeoJSON loading error:', error);
     throw new Error(`Failed to load GeoJSON: ${error.message}`);
@@ -374,36 +413,88 @@ async function loadGeoJSON(url) {
 
 // Normalize data format if needed
 function normalizeData() {
+  console.log(`Starting normalization of ${pointsData.length} data points`);
+  
   // This function adapts different data formats to a common structure
-  // In case the data format changes or needs adjustment
-  pointsData = pointsData.map(point => {
-    // Handle GeoJSON feature structure
-    const properties = point.properties || point;
-    const geometry = point.geometry || {};
-    const coordinates = geometry.coordinates || [];
-    
-    // Extract position from geometry if available
-    let position = properties.position;
-    if (!position && coordinates.length >= 2) {
-      // GeoJSON uses [longitude, latitude] order
-      position = coordinates;
-    } else if (!position && properties.longitude != null && properties.latitude != null) {
-      position = [properties.longitude, properties.latitude];
+  // Check what kind of GeoJSON structure we have
+  if (Array.isArray(pointsData) && pointsData.length > 0) {
+    if (pointsData[0].type === "Feature") {
+      console.log("Normalizing GeoJSON Features");
+      // Handle proper GeoJSON Features
+      pointsData = pointsData.map(feature => {
+        const properties = feature.properties || {};
+        const geometry = feature.geometry || {};
+        const coordinates = geometry.coordinates || [];
+        
+        // For Point geometry, coordinates is just [lng, lat]
+        // For LineString, it's an array of points, so we take the first one
+        let position;
+        if (coordinates.length > 0) {
+          if (geometry.type === "Point") {
+            position = coordinates; // [lng, lat]
+          } else if (geometry.type === "LineString" && coordinates[0] && coordinates[0].length >= 2) {
+            position = coordinates[0]; // First point in the line
+          } else if (Array.isArray(coordinates[0])) {
+            position = coordinates[0]; // Assume first item is a point
+          } else if (coordinates.length >= 2) {
+            position = coordinates; // Assume coordinates is a single point
+          }
+        }
+        
+        return {
+          ...properties,
+          geometry: geometry,
+          // Ensure consistent property naming
+          DemandRank: properties.DemandRank || properties.demand_rank || 0,
+          census_score: properties.census_score || 0,
+          crash_risk_score: properties.crash_risk_score || 0,
+          functional_class_score: properties.functional_class_score || 0,
+          school_proximity_score: properties.school_proximity_score || 0,
+          trail_proximity_score: properties.trail_proximity_score || 0,
+          rail_proximity_score: properties.rail_proximity_score || 0,
+          bus_proximity_score: properties.bus_proximity_score || 0,
+          pedestrian_feasible: properties.pedestrian_feasible || 0,
+          urban_context: properties.urban_context || 0,
+          Sidewalks: properties.Sidewalks || 0,
+          position: position
+        };
+      });
+    } else {
+      console.log("Normalizing non-Feature data");
+      // Handle other array format
+      pointsData = pointsData.map(point => {
+        const properties = point.properties || point;
+        let position = properties.position;
+        
+        if (!position) {
+          if (point.geometry && point.geometry.coordinates) {
+            position = point.geometry.coordinates;
+          } else if (properties.longitude != null && properties.latitude != null) {
+            position = [properties.longitude, properties.latitude];
+          }
+        }
+        
+        return {
+          ...properties,
+          // Ensure consistent property naming
+          DemandRank: properties.DemandRank || properties.demand_rank || 0,
+          position: position
+        };
+      });
     }
-    
-    // Ensure consistent property naming and structure
-    return {
-      ...properties,
-      // Add any normalized properties here if needed
-      DemandRank: properties.DemandRank || properties.demand_rank || 0,
-      position: position
-    };
-  });
+  }
   
   // Filter out any entries without valid positions
+  const initialCount = pointsData.length;
   pointsData = pointsData.filter(point => 
     point.position && Array.isArray(point.position) && point.position.length >= 2
   );
+  console.log(`Normalized ${pointsData.length} data points (filtered out ${initialCount - pointsData.length} invalid points)`);
+  
+  // Log a sample point for debugging
+  if (pointsData.length > 0) {
+    console.log("Sample normalized point:", pointsData[0]);
+  }
 }
 
 // Update the loading status display
@@ -520,8 +611,15 @@ function filterAndUpdateMap() {
 
 // Update deck.gl layers
 function updateMapLayers() {
-  if (!deckOverlay || !filteredData || filteredData.length === 0) {
+  if (!deckOverlay || !filteredData) {
     console.log('No filtered data available to display');
+    return;
+  }
+  
+  if (filteredData.length === 0) {
+    console.log('Filtered data is empty, nothing to display');
+    // Clear the map layers but keep the overlay
+    deckOverlay.setProps({ layers: [] });
     return;
   }
   
@@ -702,6 +800,17 @@ function handleClick(info) {
   });
   
   infoWindow.open(map);
+  
+  // If street view is enabled, show the location in street view
+  const showStreetView = document.getElementById('show-street-view')?.checked;
+  if (showStreetView) {
+    const streetViewContainer = document.getElementById('street-view');
+    if (streetViewContainer) {
+      streetViewContainer.classList.remove('hidden');
+      panorama.setPosition({ lat: point.position[1], lng: point.position[0] });
+      panorama.setVisible(true);
+    }
+  }
 }
 
 // Handle hover over a point
